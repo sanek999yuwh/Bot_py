@@ -197,7 +197,8 @@ async def get_session_info(session_id: str):
 async def index():
     with open("index.html", "r", encoding="utf-8") as f:
         return f.read()
-        def run_bot():
+
+def run_bot():
     import bot
-    
+
 threading.Thread(target=run_bot, daemon=False).start()
