@@ -10,7 +10,6 @@ import random
 from collections import defaultdict
 from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-import os
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 MISTRAL_KEY = os.environ.get("MISTRAL_KEY")
