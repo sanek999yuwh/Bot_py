@@ -6,7 +6,7 @@
 #    TELEGRAM_TOKEN = "..."
 #    И ДОБАВЬ ПОСЛЕ НЕЁ:
 #
-WEB_URL = "https://ВАШ_ДОМЕН.up.railway.app"  # <-- замени на свой URL
+WEB_URL = "https://botpy-production-6832.up.railway.app/"  # <-- замени на свой URL
 #
 # 2. Найди функцию cmd_start и замени reply_markup в send_safe на:
 #
