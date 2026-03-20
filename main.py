@@ -197,9 +197,12 @@ async def get_session_info(session_id: str):
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open("index.html", "r", encoding="utf-8") as f:
-        return f.read()
-
+        content = f.read()
+    return HTMLResponse(content=content, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    })
 def run_bot():
     import bot
-
 threading.Thread(target=run_bot, daemon=False).start()
