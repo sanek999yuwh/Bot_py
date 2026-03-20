@@ -601,6 +601,11 @@ def cmd_start(message):
         "📊 Таблицы\n🧠 Постоянная память\n\n"
         "Кнопки внизу — для быстрого доступа 👇",
         reply_markup=get_reply_kb(uid))
+    bot.send_message(message.chat.id,
+        "🌐 Веб-версия:",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("🌐 Открыть сайт", url=WEB_URL)
+        ))
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
