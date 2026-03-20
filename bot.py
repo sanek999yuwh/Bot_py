@@ -10,10 +10,10 @@ import random
 from collections import defaultdict
 from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+import os
 
-# ===================== НАСТРОЙКИ (из переменных окружения) =====================
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-MISTRAL_KEY = os.environ.get("MISTRAL_KEY", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+MISTRAL_KEY = os.environ.get("MISTRAL_KEY")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 VISION_MODEL = "pixtral-12b-2409"
