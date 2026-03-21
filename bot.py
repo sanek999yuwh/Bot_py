@@ -20,7 +20,7 @@ API_URL = "https://api.mistral.ai/v1/chat/completions"
 MEMORY_FILE = "memory.json"
 BOT_NAME = "Арк"
 DEFAULT_MODEL = "mistral-medium-latest"
-WEB_URL = "https://clck.ru/3Sgiob"
+WEB_URL = "https://botpy-production-6832.up.railway.app"
 
 MODELS = {
     "mistral-small-latest":  "⚡ Small — быстрый",
