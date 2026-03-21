@@ -9,6 +9,8 @@ import re
 import time
 import threading
 import secrets
+import base64
+import urllib.parse
 from collections import defaultdict
 from datetime import datetime
 
@@ -52,8 +54,8 @@ BANNED_KEYWORDS = [
 ]
 
 # ===================== OAUTH STATE =====================
-oauth_states = {}  # state -> True (временное хранилище)
-user_sessions = {}  # session_token -> user_info
+oauth_states = {}
+user_sessions = {}
 
 # ===================== ПАМЯТЬ =====================
 def load_memory():
@@ -132,11 +134,8 @@ async def auth_login():
 async def auth_callback(code: str = None, state: str = None, error: str = None):
     if error or not code or state not in oauth_states:
         return RedirectResponse("/?error=auth_failed")
-
     del oauth_states[state]
     redirect_uri = f"{BASE_URL}/auth/callback"
-
-    # Exchange code for token
     try:
         token_resp = requests.post("https://oauth2.googleapis.com/token", data={
             "code": code,
@@ -147,13 +146,9 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
         }, timeout=10)
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
-
-        # Get user info
         user_resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo",
             headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
         user_info = user_resp.json()
-
-        # Create session
         session_token = secrets.token_urlsafe(32)
         user_sessions[session_token] = {
             "email": user_info.get("email", ""),
@@ -161,11 +156,10 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
             "picture": user_info.get("picture", ""),
             "id": user_info.get("id", ""),
         }
-
         response = RedirectResponse("/?logged_in=1")
         response.set_cookie("ark_session", session_token, max_age=86400*30, httponly=True, samesite="lax")
         return response
-    except Exception as e:
+    except Exception:
         return RedirectResponse("/?error=token_failed")
 
 @app.get("/auth/me")
@@ -183,6 +177,25 @@ async def auth_logout(request: Request):
     response = RedirectResponse("/")
     response.delete_cookie("ark_session")
     return response
+
+# ===================== IMAGE GENERATION =====================
+class ImageRequest(BaseModel):
+    prompt: str
+
+@app.post("/api/image")
+async def generate_image(req: ImageRequest):
+    prompt_enc = urllib.parse.quote(req.prompt)
+    seed = int(time.time()) % 99999
+    url = f"https://image.pollinations.ai/prompt/{prompt_enc}?width=768&height=768&nologo=true&seed={seed}&model=flux"
+    try:
+        r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and r.content:
+            img_b64 = base64.b64encode(r.content).decode()
+            mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
+            return {"ok": True, "image": f"data:{mime};base64,{img_b64}"}
+        return {"ok": False, "error": f"Status {r.status_code}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 # ===================== API =====================
 class ChatRequest(BaseModel):
@@ -217,7 +230,6 @@ async def chat(req: ChatRequest):
         ],
         "max_tokens": 900, "temperature": 0.85,
     }
-
     try:
         r = requests.post(API_URL, headers=headers, json=body, timeout=60)
         data = r.json()
@@ -245,7 +257,6 @@ async def get_models():
 async def index():
     with open("index.html", "r", encoding="utf-8") as f:
         content = f.read()
-    from fastapi.responses import HTMLResponse
     return HTMLResponse(content=content, headers={
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache", "Expires": "0"
