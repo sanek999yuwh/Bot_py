@@ -707,7 +707,7 @@ async function checkAuth(){
       user=d.user;addAccount(d.user);sid='g_'+d.user.id;localStorage.setItem(SK,sid);
       updateUserUI(d.user);document.getElementById('login-screen').classList.add('hidden');
     }else if(localStorage.getItem(SKIPK)==='1'){document.getElementById('login-screen').classList.add('hidden');}
-  }catch{document.getElementById('login-screen').classList.add('hidden');}
+  }catch(e){}
   renderAccounts();renderDropAccounts();
 }
 
