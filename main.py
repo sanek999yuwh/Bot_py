@@ -13,6 +13,9 @@ import base64
 import urllib.parse
 from collections import defaultdict
 from datetime import datetime
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import psycopg2.pool
 
 app = FastAPI()
 
@@ -24,15 +27,15 @@ app.add_middleware(
 )
 
 # ===================== НАСТРОЙКИ =====================
-MISTRAL_KEY = os.environ.get("MISTRAL_KEY")
-API_URL = "https://api.mistral.ai/v1/chat/completions"
-MEMORY_FILE = "memory_web.json"
-BOT_NAME = "Арк"
-DEFAULT_MODEL = "mistral-medium-latest"
-
+MISTRAL_KEY          = os.environ.get("MISTRAL_KEY")
+API_URL              = "https://api.mistral.ai/v1/chat/completions"
+BOT_NAME             = "Арк"
+DEFAULT_MODEL        = "mistral-medium-latest"
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-BASE_URL = os.environ.get("BASE_URL", "https://botpy-production-6832.up.railway.app")
+BASE_URL             = os.environ.get("BASE_URL", "https://botpy-production-6832.up.railway.app")
+DATABASE_URL         = os.environ.get("DATABASE_URL", "")
+TAVILY_API_KEY       = os.environ.get("TAVILY_API_KEY", "")
 
 MODELS = {
     "mistral-small-latest":  "⚡ Small — быстрый",
@@ -53,54 +56,223 @@ BANNED_KEYWORDS = [
     "как сделать бомбу", "синтез наркотик",
 ]
 
-# ===================== OAUTH STATE =====================
-oauth_states = {}
-user_sessions = {}
+# ===================== POSTGRESQL =====================
+db_pool = None
 
-# ===================== ПАМЯТЬ =====================
-def load_memory():
-    if os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+def init_db():
+    global db_pool
+    if not DATABASE_URL:
+        print("⚠️ DATABASE_URL не задан — используем memory storage")
+        return False
+    try:
+        # Railway использует внутренний URL — меняем на публичный если нужно
+        db_url = DATABASE_URL
+        db_pool = psycopg2.pool.ThreadedConnectionPool(1, 10, db_url)
+        with db_pool.getconn() as conn:
+            with conn.cursor() as cur:
+                # Таблица сессий/истории
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        session_id TEXT PRIMARY KEY,
+                        history    JSONB DEFAULT '[]',
+                        model      TEXT DEFAULT 'mistral-medium-latest',
+                        name       TEXT,
+                        facts      JSONB DEFAULT '[]',
+                        joined     TEXT,
+                        updated_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                # Таблица Google пользователей
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        google_id  TEXT PRIMARY KEY,
+                        email      TEXT,
+                        name       TEXT,
+                        picture    TEXT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                conn.commit()
+        db_pool.putconn(conn)
+        print("✅ PostgreSQL подключён")
+        return True
+    except Exception as e:
+        print(f"❌ PostgreSQL ошибка: {e}")
+        db_pool = None
+        return False
 
-def save_memory(data):
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def get_session_db(session_id: str) -> dict:
+    if not db_pool:
+        return get_session_memory(session_id)
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM sessions WHERE session_id = %s", (session_id,))
+            row = cur.fetchone()
+            if row:
+                db_pool.putconn(conn)
+                return dict(row)
+            # Создаём новую сессию
+            now = datetime.now().strftime("%d.%m.%Y")
+            cur.execute("""
+                INSERT INTO sessions (session_id, history, model, name, facts, joined)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING *
+            """, (session_id, json.dumps([]), DEFAULT_MODEL, None, json.dumps([]), now))
+            row = cur.fetchone()
+            conn.commit()
+            db_pool.putconn(conn)
+            return dict(row)
+    except Exception as e:
+        print(f"DB get error: {e}")
+        if db_pool and conn:
+            db_pool.putconn(conn)
+        return get_session_memory(session_id)
 
-memory_db = load_memory()
+def save_session_db(session_id: str, data: dict):
+    if not db_pool:
+        return save_session_memory(session_id, data)
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            history = data.get("history", [])
+            if isinstance(history, str):
+                history = json.loads(history)
+            facts = data.get("facts", [])
+            if isinstance(facts, str):
+                facts = json.loads(facts)
+            cur.execute("""
+                UPDATE sessions SET
+                    history = %s,
+                    model = %s,
+                    name = %s,
+                    facts = %s,
+                    updated_at = NOW()
+                WHERE session_id = %s
+            """, (
+                json.dumps(history),
+                data.get("model", DEFAULT_MODEL),
+                data.get("name"),
+                json.dumps(facts),
+                session_id
+            ))
+            conn.commit()
+        db_pool.putconn(conn)
+    except Exception as e:
+        print(f"DB save error: {e}")
+        if db_pool and conn:
+            db_pool.putconn(conn)
 
-def get_session(session_id: str):
+# Fallback — память если нет БД
+memory_db = {}
+
+def get_session_memory(session_id: str) -> dict:
     if session_id not in memory_db:
         memory_db[session_id] = {
-            "history": [], "model": DEFAULT_MODEL,
-            "name": None, "facts": [],
+            "session_id": session_id,
+            "history": [],
+            "model": DEFAULT_MODEL,
+            "name": None,
+            "facts": [],
             "joined": datetime.now().strftime("%d.%m.%Y"),
         }
     return memory_db[session_id]
 
-def save_session(session_id: str):
-    save_memory(memory_db)
+def save_session_memory(session_id: str, data: dict):
+    memory_db[session_id] = data
 
+def get_session(session_id: str) -> dict:
+    return get_session_db(session_id)
+
+def save_session(session_id: str, data: dict):
+    save_session_db(session_id, data)
+
+# ===================== OAUTH =====================
+oauth_states  = {}
+user_sessions = {}
+
+# ===================== TAVILY ПОИСК =====================
+def search_web(query: str) -> str:
+    if not TAVILY_API_KEY:
+        return ""
+    try:
+        r = requests.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": TAVILY_API_KEY,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 4,
+                "include_answer": True,
+            },
+            timeout=10
+        )
+        data = r.json()
+        if data.get("answer"):
+            results = [f"Краткий ответ: {data['answer']}"]
+        else:
+            results = []
+        for item in data.get("results", [])[:3]:
+            results.append(f"• {item['title']}: {item['content'][:200]}")
+        return "\n".join(results) if results else ""
+    except Exception as e:
+        print(f"Tavily error: {e}")
+        return ""
+
+def needs_search(text: str) -> bool:
+    """Определяем нужен ли поиск"""
+    keywords = [
+        "сегодня", "сейчас", "новости", "последние", "актуальн",
+        "2024", "2025", "2026", "курс", "погода", "цена", "стоимость",
+        "что происходит", "последние события", "недавно", "вчера",
+        "когда вышел", "когда выйдет", "анонс", "релиз"
+    ]
+    t = text.lower()
+    return any(kw in t for kw in keywords)
+
+# ===================== UTILS =====================
 def is_dangerous(text: str) -> bool:
     return any(kw in text.lower() for kw in BANNED_KEYWORDS)
 
 def extract_facts(session_id: str, text: str):
     t = text.lower()
-    user = get_session(session_id)
+    session = get_session(session_id)
+    history = session.get("history", [])
+    if isinstance(history, str):
+        history = json.loads(history)
+    facts = session.get("facts", [])
+    if isinstance(facts, str):
+        facts = json.loads(facts)
+
     name_match = re.search(r"меня зовут (\w+)|моё имя (\w+)", t)
     if name_match:
         name = next(g for g in name_match.groups() if g)
-        user["name"] = name.capitalize()
-    save_session(session_id)
+        session["name"] = name.capitalize()
+
+    for interest, keywords in {
+        "игры": ["играю", "геймер", "roblox", "minecraft"],
+        "программирование": ["программирую", "кодю", "python", "пишу код"],
+        "музыка": ["слушаю музыку", "музыкант"],
+    }.items():
+        if any(kw in t for kw in keywords):
+            fact = f"интересуется {interest}"
+            if fact not in facts:
+                facts.append(fact)
+
+    session["facts"] = facts
+    save_session(session_id, session)
 
 def build_system_prompt(session_id: str) -> str:
-    user = get_session(session_id)
+    session = get_session(session_id)
     prompt = BOT_PERSONALITY
-    if user.get("name"):
-        prompt += f"\n\nПользователя зовут {user['name']}."
-    if user.get("facts"):
-        prompt += f"\nИзвестно: {', '.join(user['facts'])}."
+    name = session.get("name")
+    if name:
+        prompt += f"\n\nПользователя зовут {name}."
+    facts = session.get("facts", [])
+    if isinstance(facts, str):
+        facts = json.loads(facts)
+    if facts:
+        prompt += f"\nИзвестно: {', '.join(facts)}."
     return prompt
 
 # ===================== RATE LIMIT =====================
@@ -146,20 +318,47 @@ async def auth_callback(code: str = None, state: str = None, error: str = None):
         }, timeout=10)
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
-        user_resp = requests.get("https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"}, timeout=10)
+        user_resp = requests.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10
+        )
         user_info = user_resp.json()
         session_token = secrets.token_urlsafe(32)
         user_sessions[session_token] = {
-            "email": user_info.get("email", ""),
-            "name": user_info.get("name", ""),
+            "email":   user_info.get("email", ""),
+            "name":    user_info.get("name", ""),
             "picture": user_info.get("picture", ""),
-            "id": user_info.get("id", ""),
+            "id":      user_info.get("id", ""),
         }
+        # Сохраняем пользователя в БД
+        if db_pool:
+            try:
+                conn = db_pool.getconn()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO users (google_id, email, name, picture)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (google_id) DO UPDATE SET
+                            email = EXCLUDED.email,
+                            name = EXCLUDED.name,
+                            picture = EXCLUDED.picture
+                    """, (
+                        user_info.get("id"),
+                        user_info.get("email"),
+                        user_info.get("name"),
+                        user_info.get("picture"),
+                    ))
+                    conn.commit()
+                db_pool.putconn(conn)
+            except Exception as e:
+                print(f"User save error: {e}")
+
         response = RedirectResponse("/?logged_in=1")
         response.set_cookie("ark_session", session_token, max_age=86400*30, httponly=True, samesite="lax")
         return response
-    except Exception:
+    except Exception as e:
+        print(f"Auth error: {e}")
         return RedirectResponse("/?error=token_failed")
 
 @app.get("/auth/me")
@@ -177,25 +376,6 @@ async def auth_logout(request: Request):
     response = RedirectResponse("/")
     response.delete_cookie("ark_session")
     return response
-
-# ===================== IMAGE GENERATION =====================
-class ImageRequest(BaseModel):
-    prompt: str
-
-@app.post("/api/image")
-async def generate_image(req: ImageRequest):
-    prompt_enc = urllib.parse.quote(req.prompt)
-    seed = int(time.time()) % 99999
-    url = f"https://image.pollinations.ai/prompt/{prompt_enc}?width=768&height=768&nologo=true&seed={seed}&model=flux"
-    try:
-        r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code == 200 and r.content:
-            img_b64 = base64.b64encode(r.content).decode()
-            mime = r.headers.get("content-type", "image/jpeg").split(";")[0]
-            return {"ok": True, "image": f"data:{mime};base64,{img_b64}"}
-        return {"ok": False, "error": f"Status {r.status_code}"}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
 
 # ===================== API =====================
 class ChatRequest(BaseModel):
@@ -216,37 +396,55 @@ async def chat(req: ChatRequest):
     session = get_session(req.session_id)
     session["model"] = req.model
     extract_facts(req.session_id, req.message)
-    session["history"].append({"role": "user", "content": req.message})
-    if len(session["history"]) > 30:
-        session["history"] = session["history"][-20:]
-    save_session(req.session_id)
+
+    history = session.get("history", [])
+    if isinstance(history, str):
+        history = json.loads(history)
+
+    # Поиск в интернете если нужен
+    search_context = ""
+    if TAVILY_API_KEY and needs_search(req.message):
+        search_context = search_web(req.message)
+
+    history.append({"role": "user", "content": req.message})
+    if len(history) > 30:
+        history = history[-20:]
+    session["history"] = history
+    save_session(req.session_id, session)
+
+    system_prompt = build_system_prompt(req.session_id)
+    if search_context:
+        system_prompt += f"\n\nАктуальная информация из интернета:\n{search_context}\n\nИспользуй эти данные если они релевантны вопросу."
 
     headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
     body = {
         "model": session.get("model", DEFAULT_MODEL),
         "messages": [
-            {"role": "system", "content": build_system_prompt(req.session_id)},
-            *session["history"]
+            {"role": "system", "content": system_prompt},
+            *history
         ],
-        "max_tokens": 900, "temperature": 0.85,
+        "max_tokens": 900,
+        "temperature": 0.85,
     }
+
     try:
         r = requests.post(API_URL, headers=headers, json=body, timeout=60)
         data = r.json()
         if "choices" in data:
             reply = data["choices"][0]["message"]["content"].strip()
-            session["history"].append({"role": "assistant", "content": reply})
-            save_session(req.session_id)
+            history.append({"role": "assistant", "content": reply})
+            session["history"] = history
+            save_session(req.session_id, session)
             return {"reply": reply, "error": False}
         return {"reply": "🤔 Пустой ответ, попробуй ещё раз.", "error": True}
-    except Exception:
+    except Exception as e:
         return {"reply": "⚠️ Ошибка соединения.", "error": True}
 
 @app.post("/api/clear")
 async def clear_history(req: ClearRequest):
     session = get_session(req.session_id)
     session["history"] = []
-    save_session(req.session_id)
+    save_session(req.session_id, session)
     return {"ok": True}
 
 @app.get("/api/models")
@@ -261,6 +459,9 @@ async def index():
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache", "Expires": "0"
     })
+
+# ===================== ЗАПУСК =====================
+init_db()
 
 def run_bot():
     import bot
