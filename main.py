@@ -412,7 +412,7 @@ async def chat(req: ChatRequest):
             {"role": "system", "content": system_prompt},
             *history
         ],
-        "max_tokens": 900,
+        "max_tokens": 4000,
         "temperature": 0.85,
     }
 
