@@ -429,7 +429,7 @@ header {
 .mg {
   display: flex;
   flex-direction: column;
-  padding: 10px max(16px, calc(50% - 380px));
+  padding: 6px max(16px, calc(50% - 380px));
   animation: msg-in 0.18s ease both;
 }
 @keyframes msg-in { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:none} }
@@ -485,14 +485,13 @@ header {
   padding: 1px 0;
   width: 100%;
 }
-.bubble.bot p { margin: 3px 0; }
-.bubble.bot p:first-child { margin-top: 0; }
-.bubble.bot p:last-child  { margin-bottom: 0; }
+.bubble.bot p { margin: 0; line-height: 1.6; }
+.bubble.bot p + p { margin-top: 3px; }
 .bubble.bot strong { font-weight: 600; color: var(--text); }
 .bubble.bot em { color: var(--text2); }
-.bubble.bot h3, .bubble.bot h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; letter-spacing: -0.2px; }
-.bubble.bot ul, .bubble.bot ol { padding-left: 18px; margin: 6px 0; }
-.bubble.bot li { margin: 3px 0; }
+.bubble.bot h3, .bubble.bot h4 { font-size: 14.5px; font-weight: 600; margin: 6px 0 1px; letter-spacing: -0.2px; }
+.bubble.bot ul, .bubble.bot ol { padding-left: 16px; margin: 3px 0; }
+.bubble.bot li { margin: 0; line-height: 1.6; }
 .bubble.bot a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 
 /* Inline code */
@@ -1062,7 +1061,7 @@ header {
 
 <script>
 // ── State ──
-const TK='ark_t', SK='ark_sid', SKIPK='ark_skip', ACK='ark_accs', CHK='ark_chats';
+const TK='ark_t', SK='ark_sid', SKIPK='ark_skip', ACK='ark_accs';
 let sid = localStorage.getItem(SK);
 if (!sid) { sid = 'w_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); localStorage.setItem(SK, sid); }
 let model = 'mistral-medium-latest';
@@ -1071,8 +1070,13 @@ let file = null, fileText = '';
 let user = null;
 const MODELS = {};
 let accounts = JSON.parse(localStorage.getItem(ACK) || '[]');
-let chats = JSON.parse(localStorage.getItem(CHK) || '[]');
+let chats = [];
 let currentId = null;
+
+// Ключ хранилища чатов — отдельный для каждого аккаунта
+function chatsKey() {
+  return user ? 'ark_chats_' + user.id : 'ark_chats_guest';
+}
 
 // ── Accounts ──
 function saveAccounts() { localStorage.setItem(ACK, JSON.stringify(accounts)); }
@@ -1083,8 +1087,18 @@ function addAccount(u) {
   saveAccounts();
 }
 
-// ── Chats ──
-function saveChats() { localStorage.setItem(CHK, JSON.stringify(chats)); }
+// ── Chats — изолированы по аккаунту ──
+function saveChats() { localStorage.setItem(chatsKey(), JSON.stringify(chats)); }
+function loadChats() {
+  chats = JSON.parse(localStorage.getItem(chatsKey()) || '[]');
+}
+
+function initChats() {
+  loadChats();
+  if (!chats.length) newChat();
+  else switchChat(chats[0].id);
+  renderChats();
+}
 
 function newChat() {
   const id = 'c_' + Date.now().toString(36);
@@ -1175,16 +1189,14 @@ async function checkAuth() {
     const d = await r.json();
     if (d.logged_in) {
       user = d.user;
-      addAccount(d.user);
+      addAccount(d.user);       // сохраняем аккаунт в localStorage
       updateUserUI(d.user);
       document.getElementById('login-screen').classList.add('hidden');
     } else if (localStorage.getItem(SKIPK) === '1') {
       document.getElementById('login-screen').classList.add('hidden');
     }
-    // если ни то ни другое — показываем экран входа
   } catch(e) {
     console.log('auth error', e);
-    // НЕ скрываем экран при ошибке сети
   }
   renderLoginAccounts();
 }
@@ -1205,21 +1217,26 @@ function renderLoginAccounts() {
   const div  = document.getElementById('l-div');
   const btn  = document.getElementById('gbtn');
   const gsvg = `<svg viewBox="0 0 24 24" width="16" height="16"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>`;
+
+  // Показываем список только если есть сохранённые аккаунты
   if (!accounts.length) {
     list.classList.remove('show');
     div.style.display = 'none';
     btn.innerHTML = gsvg + ' Войти через Google';
     return;
   }
+
   list.classList.add('show');
   div.style.display = 'flex';
-  btn.innerHTML = gsvg + ' Добавить аккаунт';
+  // Кнопка — добавить другой аккаунт
+  btn.innerHTML = gsvg + ' Войти с другого аккаунта';
+
   list.innerHTML = accounts.map(a => `
-    <div class="acc-item" onclick="location.href='/auth/login'">
+    <div class="acc-item" onclick="location.href='/auth/login'" style="cursor:pointer">
       ${a.picture
-        ? `<img src="${a.picture}" alt="">`
+        ? `<img src="${a.picture}" alt="" style="width:28px;height:28px;border-radius:50%;object-fit:cover">`
         : `<div class="acc-av">${(a.name || '?')[0]}</div>`}
-      <div>
+      <div style="flex:1;min-width:0">
         <div class="acc-name">${esc(a.name || '')}</div>
         <div class="acc-email">${esc(a.email || '')}</div>
       </div>
@@ -1310,9 +1327,8 @@ async function init() {
     syncModelLabel();
   } catch {}
 
-  if (!chats.length) newChat();
-  else switchChat(chats[0].id);
-  renderChats();
+  // Загружаем чаты ПОСЛЕ авторизации — у каждого аккаунта свои
+  initChats();
 
   const ta = document.getElementById('inp');
   ta.addEventListener('input', grow);
@@ -1364,7 +1380,7 @@ function fmt(text) {
   text = text.replace(/^[•·\-]\s+(.+)$/gm, '<li>$1</li>');
   text = text.replace(/^(\d+)\.\s+(.+)$/gm, '<li>$2</li>');
   text = text.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, s => `<ul>${s}</ul>`);
-  // Paragraphs
+  // Paragraphs — компактно, без огромных пробелов
   return text.split(/\n{2,}/).map(p => {
     p = p.trim();
     if (!p) return '';
