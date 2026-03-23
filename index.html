@@ -821,6 +821,26 @@ header {
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 #fileinput { display: none; }
+#audioinput { display: none; }
+
+/* Voice recording */
+.i-icon.recording {
+  color: #ef4444 !important;
+  background: rgba(239,68,68,0.1) !important;
+  animation: pulse-rec 1s ease infinite;
+}
+@keyframes pulse-rec {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* Streaming cursor */
+.stream-cursor::after {
+  content: '▌';
+  animation: blink 0.7s step-end infinite;
+  color: var(--text3);
+}
+@keyframes blink { 50% { opacity: 0; } }
 
 /* ── Mobile ── */
 @media(max-width: 680px) {
@@ -909,6 +929,7 @@ header {
 </svg>
 
 <input type="file" id="fileinput" accept=".txt,.py,.js,.json,.csv,.md">
+<input type="file" id="audioinput" accept="audio/*">
 <div id="sb-overlay"></div>
 
 <!-- ── SIDEBAR ── -->
@@ -971,6 +992,9 @@ header {
       </div>
     </div>
     <div class="h-right">
+      <button class="icon-btn" id="export-btn" title="Экспорт чата">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><path d="M10 3v10M6 9l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 15v1.5A1.5 1.5 0 004.5 18h11A1.5 1.5 0 0017 16.5V15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
       <button class="icon-btn" id="theme-btn">
         <svg id="theme-icon" width="15" height="15"><use href="#ic-moon"/></svg>
       </button>
@@ -1019,6 +1043,9 @@ header {
         <div class="ibox-left">
           <button class="i-icon" onclick="document.getElementById('fileinput').click()" title="Прикрепить файл">
             <svg><use href="#ic-clip"/></svg>
+          </button>
+          <button class="i-icon" id="voice-btn" title="Голосовое сообщение">
+            <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><rect x="7" y="2" width="6" height="10" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M4 10a6 6 0 0012 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="10" y1="16" x2="10" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
           </button>
         </div>
         <button id="sbtn" onclick="send()">
@@ -1461,7 +1488,7 @@ function showTyping() {
 }
 function hideTyping() { document.getElementById('typing')?.remove(); }
 
-// ── Send ──
+// ── Send (streaming) ──
 async function send() {
   if (busy) return;
   const ta = document.getElementById('inp');
@@ -1488,23 +1515,190 @@ async function send() {
   showTyping();
 
   try {
-    const r = await fetch('/api/chat', {
+    const r = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg, session_id: sessionId, model }),
     });
-    const d = await r.json();
+
+    if (!r.ok || !r.body) throw new Error('stream failed');
+
     hideTyping();
-    addMsg('bot', d.reply);
+    const msgEl = appendStreamMsg();
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const d = JSON.parse(line.slice(6));
+          if (d.done) break;
+          if (d.delta) {
+            fullText += d.delta;
+            updateStreamMsg(msgEl, fullText);
+          }
+        } catch {}
+      }
+    }
+
+    finalizeStreamMsg(msgEl, fullText);
+    saveStreamMsg(fullText);
+
   } catch {
     hideTyping();
-    addMsg('bot', 'Не удалось получить ответ. Попробуй снова.');
+    // Fallback to regular chat
+    try {
+      const r2 = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, session_id: sessionId, model }),
+      });
+      const d = await r2.json();
+      addMsg('bot', d.reply);
+    } catch {
+      addMsg('bot', 'Не удалось получить ответ. Попробуй снова.');
+    }
   }
 
   busy = false;
   document.getElementById('sbtn').disabled = false;
   ta.focus();
 }
+
+// ── Streaming helpers ──
+function appendStreamMsg() {
+  document.getElementById('welcome')?.remove();
+  const msgs = document.getElementById('msgs');
+  const g = document.createElement('div');
+  g.className = 'mg bot';
+  g.innerHTML = `
+    <div class="mi">
+      ${BOT_AV}
+      <div class="mc">
+        <div class="bubble bot stream-cursor" id="stream-bubble"></div>
+        <span class="mtime">${ts()}</span>
+      </div>
+    </div>`;
+  msgs.appendChild(g);
+  msgs.scrollTop = msgs.scrollHeight;
+  return g;
+}
+
+function updateStreamMsg(el, text) {
+  const bubble = el.querySelector('#stream-bubble');
+  if (bubble) {
+    bubble.innerHTML = fmt(text);
+    document.getElementById('msgs').scrollTop = 99999;
+  }
+}
+
+function finalizeStreamMsg(el, text) {
+  const bubble = el.querySelector('#stream-bubble');
+  if (bubble) {
+    bubble.removeAttribute('id');
+    bubble.classList.remove('stream-cursor');
+    bubble.innerHTML = fmt(text);
+    const mc = el.querySelector('.mc');
+    if (mc && !mc.querySelector('.mact')) {
+      const act = document.createElement('div');
+      act.className = 'mact';
+      act.innerHTML = `<button class="mact-btn" onclick="copyMsg(this)">Копировать</button>`;
+      mc.insertBefore(act, mc.querySelector('.mtime'));
+    }
+  }
+}
+
+function saveStreamMsg(text) {
+  const c = chats.find(x => x.id === currentId);
+  if (c) {
+    c.msgs.push({ role: 'bot', text });
+    saveChats();
+  }
+}
+
+// ── Voice recording ──
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+document.getElementById('voice-btn').addEventListener('click', async () => {
+  if (isRecording) {
+    stopRecording();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      document.getElementById('voice-btn').classList.remove('recording');
+      isRecording = false;
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      await sendVoice(blob);
+    };
+    mediaRecorder.start();
+    isRecording = true;
+    document.getElementById('voice-btn').classList.add('recording');
+    toast('🎤 Запись... нажми снова чтобы остановить');
+  } catch (e) {
+    toast('Нет доступа к микрофону');
+  }
+});
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+async function sendVoice(blob) {
+  toast('🔄 Расшифровываю...');
+  const c = chats.find(x => x.id === currentId);
+  const sessionId = c?.sid || sid;
+  const formData = new FormData();
+  formData.append('file', blob, 'voice.webm');
+  formData.append('session_id', sessionId);
+  try {
+    const r = await fetch('/api/voice', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (d.text) {
+      document.getElementById('inp').value = d.text;
+      grow();
+      toast('✅ Расшифровано');
+    } else {
+      toast('Не удалось расшифровать');
+    }
+  } catch {
+    toast('Ошибка при расшифровке');
+  }
+}
+
+// ── Export chat ──
+document.getElementById('export-btn').onclick = () => {
+  const c = chats.find(x => x.id === currentId);
+  if (!c || !c.msgs.length) { toast('Нет сообщений для экспорта'); return; }
+  const lines = [`# ${c.title}\n`, `Экспорт: ${new Date().toLocaleString('ru')}\n\n---\n`];
+  c.msgs.forEach(m => {
+    const role = m.role === 'user' ? '**Вы**' : '**Арк**';
+    lines.push(`${role}:\n${m.text}\n`);
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ark-chat-${Date.now()}.md`;
+  a.click();
+  toast('Чат экспортирован');
+};
 
 function chip(t) { document.getElementById('inp').value = t; send(); }
 
