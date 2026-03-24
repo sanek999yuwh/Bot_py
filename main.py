@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ import re
 import time
 import threading
 import secrets
+import base64
 from collections import defaultdict
 from datetime import datetime
 import psycopg2
@@ -34,6 +35,7 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 BASE_URL             = os.environ.get("BASE_URL", "https://botpy-production-6832.up.railway.app")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
 TAVILY_API_KEY       = os.environ.get("TAVILY_API_KEY", "")
+GROQ_API_KEY         = os.environ.get("GROQ_API_KEY", "")
 
 MODELS = {
     "mistral-small-latest":  "⚡ Small — быстрый",
@@ -530,44 +532,26 @@ async def chat(req: ChatRequest):
         print(f"Chat error: {e}")
         return {"reply": "⚠️ Ошибка соединения.", "error": True}
 
-# ── Голосовые сообщения ──
+# ── Голосовые сообщения через Groq Whisper ──
 @app.post("/api/voice")
-async def transcribe_voice(file: UploadFile = File(...), session_id: str = ""):
-    """Расшифровка голосового сообщения через Mistral"""
-    if not MISTRAL_KEY:
-        return JSONResponse({"error": "MISTRAL_KEY не задан"}, status_code=500)
+async def transcribe_voice(file: UploadFile = File(...), session_id: str = Form("")):
+    if not GROQ_API_KEY:
+        return JSONResponse({"error": "GROQ_API_KEY не задан"}, status_code=500)
     try:
         audio_bytes = await file.read()
-        import base64
-        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-        # Определяем тип файла
-        content_type = file.content_type or "audio/webm"
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        body = {
-            "model": "mistral-small-latest",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Расшифруй это аудио сообщение дословно. Верни только текст без пояснений."
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{content_type};base64,{audio_b64}"}
-                        }
-                    ]
-                }
-            ],
-            "max_tokens": 500
-        }
-        r = requests.post(API_URL, headers=headers, json=body, timeout=30)
+        # Groq Whisper API
+        r = requests.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            files={"file": (file.filename or "voice.webm", audio_bytes, file.content_type or "audio/webm")},
+            data={"model": "whisper-large-v3", "language": "ru", "response_format": "json"},
+            timeout=30,
+        )
         data = r.json()
-        if "choices" in data:
-            text = data["choices"][0]["message"]["content"].strip()
+        text = data.get("text", "").strip()
+        if text:
             return {"text": text}
-        return JSONResponse({"error": "Не удалось расшифровать"}, status_code=500)
+        return JSONResponse({"error": "Пустой ответ от Whisper"}, status_code=500)
     except Exception as e:
         print(f"Voice error: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -595,8 +579,14 @@ async def index():
 # ===================== ЗАПУСК =====================
 if not MISTRAL_KEY:
     print("❌ MISTRAL_KEY не задан — /api/chat будет возвращать ошибки")
-    def run_bot():
-    import bot
+
+init_db()
+
+# ===================== ЗАПУСК БОТА =====================
+def run_bot():
+    try:
+        import bot
+    except Exception as e:
+        print(f"❌ Ошибка запуска бота: {e}")
 
 threading.Thread(target=run_bot, daemon=False).start()
-init_db()
