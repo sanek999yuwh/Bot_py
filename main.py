@@ -595,5 +595,8 @@ async def index():
 # ===================== ЗАПУСК =====================
 if not MISTRAL_KEY:
     print("❌ MISTRAL_KEY не задан — /api/chat будет возвращать ошибки")
+    def run_bot():
+    import bot
 
+threading.Thread(target=run_bot, daemon=False).start()
 init_db()
