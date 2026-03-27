@@ -842,6 +842,72 @@ header {
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* ── Translator panel ── */
+#translate-panel {
+  display: none;
+  position: fixed;
+  top: 50px; right: 0;
+  width: min(420px, 100vw);
+  height: calc(100% - 50px);
+  background: var(--sidebar);
+  border-left: 1px solid var(--border);
+  flex-direction: column;
+  z-index: 50;
+  animation: slide-in 0.2s ease;
+}
+#translate-panel.open { display: flex; }
+@keyframes slide-in { from{transform:translateX(20px);opacity:0} to{transform:none;opacity:1} }
+.tp-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tp-title { font-size: 14px; font-weight: 500; color: var(--text); }
+.tp-body { flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; }
+.tp-langs {
+  display: flex; align-items: center; gap: 8px;
+}
+.tp-select {
+  flex: 1; padding: 7px 10px;
+  background: var(--card); border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text);
+  font-family: 'Geist', sans-serif; font-size: 13px;
+  cursor: pointer;
+}
+.tp-swap {
+  background: none; border: none; cursor: pointer;
+  color: var(--text3); padding: 4px; border-radius: 6px;
+  transition: all 0.15s; flex-shrink: 0;
+}
+.tp-swap:hover { background: var(--hover); color: var(--text); }
+.tp-textarea {
+  width: 100%; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--border2);
+  border-radius: 8px; color: var(--text);
+  font-family: 'Geist', sans-serif; font-size: 14px;
+  resize: none; min-height: 100px;
+  line-height: 1.5;
+}
+.tp-textarea:focus { outline: none; border-color: var(--text3); }
+.tp-textarea.result { background: var(--bg); color: var(--text); min-height: 100px; }
+.tp-btn {
+  padding: 9px 16px;
+  background: var(--text); color: var(--bg);
+  border: none; border-radius: 8px;
+  font-family: 'Geist', sans-serif; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.tp-btn:hover { opacity: 0.85; }
+.tp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.tp-copy {
+  font-size: 12px; color: var(--text3); background: none; border: none;
+  cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  transition: all 0.12s; align-self: flex-end;
+}
+.tp-copy:hover { background: var(--hover); color: var(--text); }
+
 /* ── Mobile ── */
 @media(max-width: 680px) {
   #sidebar {
@@ -928,7 +994,7 @@ header {
 </defs>
 </svg>
 
-<input type="file" id="fileinput" accept=".txt,.py,.js,.json,.csv,.md">
+<input type="file" id="fileinput" accept=".txt,.py,.js,.ts,.jsx,.tsx,.json,.csv,.md,.html,.css,.xml,.yaml,.yml,.sql,.sh,.env,.toml,.ini,.log">
 <input type="file" id="audioinput" accept="audio/*">
 <div id="sb-overlay"></div>
 
@@ -992,6 +1058,9 @@ header {
       </div>
     </div>
     <div class="h-right">
+      <button class="icon-btn" id="translate-btn" title="Переводчик">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><path d="M3 5h8M7 3v2M5 5c0 3 2 5 4 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 11c-1-1-3-2-3-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M11 8l2-2 2 2M13 6v7M10.5 13h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button class="icon-btn" id="export-btn" title="Экспорт чата">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><path d="M10 3v10M6 9l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 15v1.5A1.5 1.5 0 004.5 18h11A1.5 1.5 0 0017 16.5V15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -1054,6 +1123,52 @@ header {
       </div>
     </div>
     <div class="hint">Enter — отправить &nbsp;·&nbsp; Shift+Enter — новая строка</div>
+  </div>
+</div>
+
+<!-- ── TRANSLATOR PANEL ── -->
+<div id="translate-panel">
+  <div class="tp-header">
+    <span class="tp-title">Переводчик</span>
+    <button class="icon-btn" onclick="closeTranslator()">
+      <svg width="15" height="15" viewBox="0 0 20 20" fill="none"><line x1="5" y1="5" x2="15" y2="15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="15" y1="5" x2="5" y2="15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="tp-body">
+    <div class="tp-langs">
+      <select class="tp-select" id="tp-from">
+        <option value="auto">Определить язык</option>
+        <option value="русский">Русский</option>
+        <option value="английский">Английский</option>
+        <option value="немецкий">Немецкий</option>
+        <option value="французский">Французский</option>
+        <option value="испанский">Испанский</option>
+        <option value="китайский">Китайский</option>
+        <option value="японский">Японский</option>
+        <option value="арабский">Арабский</option>
+        <option value="турецкий">Турецкий</option>
+        <option value="украинский">Украинский</option>
+      </select>
+      <button class="tp-swap" onclick="swapLangs()" title="Поменять языки">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><path d="M4 7h12M13 4l3 3-3 3M16 13H4M7 10l-3 3 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <select class="tp-select" id="tp-to">
+        <option value="английский">Английский</option>
+        <option value="русский">Русский</option>
+        <option value="немецкий">Немецкий</option>
+        <option value="французский">Французский</option>
+        <option value="испанский">Испанский</option>
+        <option value="китайский">Китайский</option>
+        <option value="японский">Японский</option>
+        <option value="арабский">Арабский</option>
+        <option value="турецкий">Турецкий</option>
+        <option value="украинский">Украинский</option>
+      </select>
+    </div>
+    <textarea class="tp-textarea" id="tp-input" placeholder="Введи текст для перевода..." rows="4"></textarea>
+    <button class="tp-btn" id="tp-btn" onclick="doTranslate()">Перевести</button>
+    <textarea class="tp-textarea result" id="tp-output" placeholder="Перевод появится здесь..." rows="4" readonly></textarea>
+    <button class="tp-copy" onclick="copyTranslation()">Копировать</button>
   </div>
 </div>
 
@@ -1326,12 +1441,22 @@ function closeModelDrop() {
 }
 
 // ── File ──
+const FILE_ICONS = {
+  py: '🐍', js: '🟨', ts: '🔷', jsx: '⚛️', tsx: '⚛️',
+  html: '🌐', css: '🎨', json: '📋', csv: '📊', md: '📝',
+  sql: '🗄️', sh: '⚙️', yaml: '📄', yml: '📄', txt: '📄',
+  xml: '📄', toml: '📄', ini: '📄', log: '📄', env: '🔒',
+};
+function fileIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return FILE_ICONS[ext] || '📄';
+}
 document.getElementById('fileinput').addEventListener('change', e => {
   const f = e.target.files[0];
   if (!f) return;
-  if (f.size > 500000) { toast('Файл слишком большой (макс 500 КБ)'); return; }
+  if (f.size > 2000000) { toast('Файл слишком большой (макс 2 МБ)'); return; }
   file = f;
-  document.getElementById('fp-name').textContent = f.name;
+  document.getElementById('fp-name').textContent = fileIcon(f.name) + ' ' + f.name;
   document.getElementById('fprev').classList.add('show');
   const rd = new FileReader();
   rd.onload = ev => { fileText = ev.target.result; };
@@ -1497,8 +1622,14 @@ async function send() {
 
   let msg = text;
   if (file && fileText) {
-    msg = `[Файл: ${file.name}]\n\n${fileText}\n\n${text || 'Проанализируй этот файл'}`;
-    addMsg('user', `📎 ${file.name}${text ? '\n' + text : ''}`);
+    const ext = file.name.split('.').pop().toLowerCase();
+    const codeExts = ['py','js','ts','jsx','tsx','html','css','json','sql','sh','yaml','yml','toml','ini','env'];
+    const isCode = codeExts.includes(ext);
+    const defaultPrompt = isCode
+      ? `Проанализируй этот код: найди баги, предложи улучшения, объясни что делает`
+      : `Проанализируй этот файл`;
+    msg = `[Файл: ${file.name}]\n\`\`\`${ext}\n${fileText}\n\`\`\`\n\n${text || defaultPrompt}`;
+    addMsg('user', `${fileIcon(file.name)} ${file.name}${text ? '\n' + text : ''}`);
   } else {
     addMsg('user', text);
   }
@@ -1722,6 +1853,81 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), 2400);
+}
+
+// ── Translator ──
+document.getElementById('translate-btn').onclick = () => {
+  document.getElementById('translate-panel').classList.toggle('open');
+};
+function closeTranslator() {
+  document.getElementById('translate-panel').classList.remove('open');
+}
+function swapLangs() {
+  const from = document.getElementById('tp-from');
+  const to = document.getElementById('tp-to');
+  const input = document.getElementById('tp-input');
+  const output = document.getElementById('tp-output');
+  const fromVal = from.value === 'auto' ? to.value : from.value;
+  // swap selects
+  const tmp = to.value;
+  to.value = fromVal;
+  // find matching option in from
+  const opt = Array.from(from.options).find(o => o.value === tmp);
+  if (opt) from.value = tmp; else from.value = 'auto';
+  // swap text
+  const tmpText = input.value;
+  input.value = output.value;
+  output.value = tmpText;
+}
+async function doTranslate() {
+  const text = document.getElementById('tp-input').value.trim();
+  if (!text) { toast('Введи текст для перевода'); return; }
+  const from = document.getElementById('tp-from').value;
+  const to = document.getElementById('tp-to').value;
+  const btn = document.getElementById('tp-btn');
+  const out = document.getElementById('tp-output');
+  btn.disabled = true;
+  btn.textContent = 'Переводим...';
+  out.value = '';
+  const fromText = from === 'auto' ? 'определи язык автоматически' : `с ${from}ого`;
+  const prompt = `Переведи следующий текст ${fromText} на ${to}й язык. Верни ТОЛЬКО перевод без пояснений и комментариев:\n\n${text}`;
+  const c = chats.find(x => x.id === currentId);
+  const sessionId = c?.sid || sid;
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: prompt, session_id: 'translate_' + sessionId, model }),
+    });
+    if (!r.ok || !r.body) throw new Error('failed');
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const d = JSON.parse(line.slice(6));
+          if (d.done) break;
+          if (d.delta) out.value += d.delta;
+        } catch {}
+      }
+    }
+  } catch {
+    out.value = 'Ошибка перевода. Попробуй снова.';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Перевести';
+}
+function copyTranslation() {
+  const text = document.getElementById('tp-output').value;
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => toast('Перевод скопирован'));
 }
 
 init();
