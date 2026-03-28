@@ -16,8 +16,11 @@ import psycopg2.pool
 
 from shared import (
     MODELS, DEFAULT_MODEL, API_URL, MISTRAL_KEY,
-    is_dangerous, extract_facts_from_text, build_base_prompt,
-    needs_search, search_web,
+    is_dangerous, 
+    extract_facts_from_text, 
+    build_base_prompt,
+    needs_search, 
+    search_web,
 )
 
 app = FastAPI()
