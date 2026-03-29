@@ -339,7 +339,16 @@ if not MISTRAL_KEY:
 init_db()
 
 def run_bot():
-    try: import bot
-    except Exception as e: print(f"Bot error: {e}")
+    import importlib, traceback
+    while True:
+        try:
+            import bot
+            break  # bot.infinity_polling() блокирует — если вышли, значит упало
+        except SystemExit:
+            print("[bot] SystemExit — перезапуск через 5 сек.")
+        except Exception as e:
+            print(f"[bot] Ошибка: {e}")
+            traceback.print_exc()
+        time.sleep(5)
 
-threading.Thread(target=run_bot, daemon=False).start()
+threading.Thread(target=run_bot, daemon=True).start()
