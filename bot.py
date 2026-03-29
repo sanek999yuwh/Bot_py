@@ -297,10 +297,18 @@ def admin_keyboard():
 
 # ===================== MARKDOWN / ОТПРАВКА =====================
 def fix_md(text):
-    text = re.sub(r'^#{1,6}\s+','',text,flags=re.MULTILINE)
-    text = re.sub(r'^---+$','',text,flags=re.MULTILINE)
-    text = re.sub(r'\n{3,}','\n\n',text)
-    return text.strip()
+    # Убираем # только вне блоков кода
+    parts = re.split(r'(```[\s\S]*?```)', text)
+    result = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            result.append(part)  # код — не трогаем
+        else:
+            part = re.sub(r'^#{1,6}\s+', '', part, flags=re.MULTILINE)
+            part = re.sub(r'^-{3,}$', '', part, flags=re.MULTILINE)
+            part = re.sub(r'\n{3,}', '\n\n', part)
+            result.append(part)
+    return ''.join(result).strip()
 
 def safe_md(text):
     for ch in ["*","_","`"]:
@@ -403,7 +411,7 @@ def ask_ai(uid,text,chat_id,mode="chat"):
     messages=([{"role":"system","content":get_system_prompt(uid,mode)},{"role":"user","content":text}]
               if mode in("summary","table") else
               [{"role":"system","content":get_system_prompt(uid,"chat")},*user["history"]])
-    body={"model":model,"messages":messages,"max_tokens":900,"stream":True,
+    body={"model":model,"messages":messages,"max_tokens":1200,"stream":True,
           "temperature":0.7 if mode in("summary","table") else 0.85}
     msg=None
     try:
