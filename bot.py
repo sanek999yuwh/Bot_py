@@ -648,10 +648,17 @@ def handle_message(message):
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
 
 # ===================== ЗАПУСК =====================
-if not TELEGRAM_TOKEN or not MISTRAL_KEY:
-    print("❌ Не заданы TELEGRAM_TOKEN или MISTRAL_KEY"); exit(1)
-
-init_db()
-load_banned()
-print(f"✅ {BOT_NAME} запущен!")
-bot.infinity_polling()
+if not TELEGRAM_TOKEN:
+    print("❌ TELEGRAM_TOKEN не задан")
+elif not MISTRAL_KEY:
+    print("❌ MISTRAL_KEY не задан")
+else:
+    init_db()
+    load_banned()
+    print(f"✅ {BOT_NAME} запущен!")
+    while True:
+        try:
+            bot.infinity_polling(timeout=30, long_polling_timeout=25)
+        except Exception as e:
+            print(f"[polling] {e} — перезапуск через 5 сек.")
+            time.sleep(5)
