@@ -578,34 +578,50 @@ def cmd_ban(message):
         bot.send_message(message.chat.id,f"🚫 Пользователь `{parts[1]}` забанен.",parse_mode="Markdown")
     except Exception: bot.send_message(message.chat.id,"Неверный ID.")
 
-@bot.message_handler(commands=["unban"])
-def cmd_unban(message):
-    if message.from_user.id!=ADMIN_ID: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
-    parts=message.text.split()
-    if len(parts)<2: bot.send_message(message.chat.id,"Использование: /unban [user_id]"); return
-    try:
-        unban_user(int(parts[1]))
-        bot.send_message(message.chat.id,f"✅ Пользователь `{parts[1]}` разбанен.",parse_mode="Markdown")
-    except Exception: bot.send_message(message.chat.id,"Неверный ID.")
+@bot.message_handler(func=lambda m:True)
+def handle_message(message):
+    if not message.text: return
+    uid=message.from_user.id; text=message.text
 
-@bot.message_handler(commands=["help"])
-def cmd_help(message):
-    send_safe(message.chat.id,"📋 *Команды:*\n\n/start — начать сначала\n/help — помощь\n\nИспользуй кнопки внизу 👇",
-              reply_markup=get_reply_kb(message.from_user.id))
+    if uid in banned_users:
+        bot.send_message(message.chat.id,"⛔ Доступ запрещён.")
+        return
 
-@bot.message_handler(content_types=["photo"])
-def handle_photo(message):
-    uid=message.from_user.id
-    if uid in banned_users: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
-    caption=message.caption or ""
-    if is_dangerous(caption): bot.send_message(message.chat.id,random.choice(SAFE_REPLIES)); return
-    ok,reason=check_rate(uid)
-    if not ok: bot.send_message(message.chat.id,reason); return
+    if text=="⚙️ Меню":
+        bot.send_message(message.chat.id,"⚙️ Меню:",reply_markup=main_keyboard())
+        return
+
+    if text=="👑 Админ панель":
+        if uid!=ADMIN_ID:
+            bot.send_message(message.chat.id,"⛔ Доступ запрещён.")
+            return
+        send_safe(message.chat.id,"👑 *Админ-панель:*",reply_markup=admin_keyboard())
+        return
+
+    # Проверка на благодарность
+    user = get_user(uid)
+    if not user.get("donate_shown", False):
+        if any(word in text.lower() for word in THANKS_WORDS):
+            user["donate_shown"] = True
+            save_user(uid)
+            send_safe(message.chat.id, DONATE_REPLY)
+            return
+
+    if is_dangerous(text):
+        bot.send_message(message.chat.id, random.choice(SAFE_REPLIES))
+        return
+
+    ok, reason = check_rate(uid)
+    if not ok:
+        bot.send_message(message.chat.id, reason)
+        return
+
+    get_user(uid)["last_active"] = datetime.now().strftime("%d.%m.%Y %H:%M")
+    save_user(uid)
+
     bot.send_chat_action(message.chat.id,"typing")
-    try:
-        fi=bot.get_file(message.photo[-1].file_id)
-        send_long(message.chat.id,ask_ai_image(uid,bot.download_file(fi.file_path),caption))
-    except Exception: send_safe(message.chat.id,"⚠️ Проблема с интернетом, подождите.")
+    threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
+
 
 @bot.message_handler(func=lambda m:True)
 def handle_message(message):
