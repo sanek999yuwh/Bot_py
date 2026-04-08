@@ -333,27 +333,23 @@ async def index():
         "Pragma": "no-cache", "Expires": "0"})
 
 # ===================== ЗАПУСК БОТА =====================
-# ===================== ЗАПУСК =====================
-def start_polling():
-    if not TELEGRAM_TOKEN:
-        print("❌ TELEGRAM_TOKEN не задан")
-        return
-    if not MISTRAL_KEY:
-        print("❌ MISTRAL_KEY не задан")
-        return
-    
-    init_db()
-    load_banned()
-    print(f"✅ {BOT_NAME} запущен!")
-    
+# ===================== ЗАПУСК =====================# ===================== ЗАПУСК БОТА =====================
+if not MISTRAL_KEY:
+    print("WARNING: MISTRAL_KEY not set")
+
+init_db()
+
+def run_bot():
+    import subprocess
+    import sys
     while True:
         try:
-            bot.infinity_polling(timeout=30, long_polling_timeout=25)
+            # Запускаем bot.py как отдельный процесс
+            subprocess.run([sys.executable, "bot.py"], check=True)
+        except subprocess.CalledProcessError:
+            print("[bot] Упал с ошибкой — перезапуск через 5 сек.")
         except Exception as e:
-            print(f"[polling] {e} — перезапуск через 5 сек.")
-            time.sleep(5)
-
-if __name__ == "__main__":
-    start_polling()
+            print(f"[bot] Ошибка запуска: {e}")
+        time.sleep(5)
 
 threading.Thread(target=run_bot, daemon=True).start()
