@@ -1,4 +1,4 @@
-е"""
+"""
 shared.py — общая логика для bot.py и main.py
 """
 import os
