@@ -21,7 +21,7 @@ from shared import (
     build_base_prompt,
     needs_search, 
     search_web,
-    THANK_WORDS, 
+    THANKS_WORDS, 
     DONATE_REPLY, 
 )
 
