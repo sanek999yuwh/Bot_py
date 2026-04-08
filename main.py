@@ -126,6 +126,13 @@ def check_rate_limit(session_id):
     user_last_msg[session_id] = now
     return True
 
+def check_donate(message: str) -> str | None:
+    """Если пользователь говорит спасибо — отвечаем с донатом"""
+    t = message.lower()
+    if any(w in t for w in THANKS_WORDS):
+        return DONATE_REPLY
+    return None
+
 def _prep_history(session_id, message, model):
     session = get_session(session_id)
     session["model"] = model
@@ -231,6 +238,13 @@ async def chat_stream(req: ChatRequest):
             yield f"data: {json.dumps({'done':True})}\n\n"
         return StreamingResponse(rate(), media_type="text/event-stream")
 
+    donate = check_donate(req.message)
+    if donate:
+        async def donate_gen():
+            yield f"data: {json.dumps({'delta': donate, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        return StreamingResponse(donate_gen(), media_type="text/event-stream")
+
     messages, session = _prep_history(req.session_id, req.message, req.model)
     body = {"model": session.get("model", DEFAULT_MODEL), "messages": messages,
             "max_tokens": 4000, "temperature": 0.85, "stream": True}
@@ -272,6 +286,8 @@ async def chat_stream(req: ChatRequest):
 async def chat(req: ChatRequest):
     if is_dangerous(req.message): return {"reply": "Брат, на такое я не подписан 😄", "error": False}
     if not check_rate_limit(req.session_id): return {"reply": "Подожди секунду...", "error": True}
+    donate = check_donate(req.message)
+    if donate: return {"reply": donate, "error": False}
     messages, session = _prep_history(req.session_id, req.message, req.model)
     try:
         r = requests.post(API_URL,
@@ -334,8 +350,7 @@ async def index():
         "Cache-Control": "no-cache, no-store, must-revalidate",
         "Pragma": "no-cache", "Expires": "0"})
 
-# ===================== ЗАПУСК БОТА =====================
-# ===================== ЗАПУСК =====================# ===================== ЗАПУСК БОТА =====================
+# ===================== ЗАПУСК =====================
 if not MISTRAL_KEY:
     print("WARNING: MISTRAL_KEY not set")
 
