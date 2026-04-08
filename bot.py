@@ -1,4 +1,4 @@
-6import telebot
+import telebot
 import requests
 import base64
 import time
