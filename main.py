@@ -333,22 +333,27 @@ async def index():
         "Pragma": "no-cache", "Expires": "0"})
 
 # ===================== ЗАПУСК БОТА =====================
-if not MISTRAL_KEY:
-    print("WARNING: MISTRAL_KEY not set")
-
-init_db()
-
-def run_bot():
-    import importlib, traceback
+# ===================== ЗАПУСК =====================
+def start_polling():
+    if not TELEGRAM_TOKEN:
+        print("❌ TELEGRAM_TOKEN не задан")
+        return
+    if not MISTRAL_KEY:
+        print("❌ MISTRAL_KEY не задан")
+        return
+    
+    init_db()
+    load_banned()
+    print(f"✅ {BOT_NAME} запущен!")
+    
     while True:
         try:
-            import bot
-            break  # bot.infinity_polling() блокирует — если вышли, значит упало
-        except SystemExit:
-            print("[bot] SystemExit — перезапуск через 5 сек.")
+            bot.infinity_polling(timeout=30, long_polling_timeout=25)
         except Exception as e:
-            print(f"[bot] Ошибка: {e}")
-            traceback.print_exc()
-        time.sleep(5)
+            print(f"[polling] {e} — перезапуск через 5 сек.")
+            time.sleep(5)
+
+if __name__ == "__main__":
+    start_polling()
 
 threading.Thread(target=run_bot, daemon=True).start()
