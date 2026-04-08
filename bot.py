@@ -1,4 +1,4 @@
-import telebot
+6import telebot
 import requests
 import base64
 import time
@@ -17,7 +17,7 @@ from shared import (
     MISTRAL_KEY, DATABASE_URL, API_URL, DEFAULT_MODEL, MODELS, BOT_NAME, WEB_URL,
     is_dangerous, SAFE_REPLIES,
     extract_name, extract_interests, detect_mood, detect_style,
-    build_prompt, build_summary_prompt, build_table_prompt,
+    build_prompt, build_summary_prompt, build_table_prompt, THANKS_WORDS, DONATE_REPLY
 )
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
