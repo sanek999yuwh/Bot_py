@@ -637,8 +637,6 @@ if not user.get("donate_shown", False):
         user["donate_shown"] = True
         save_user(uid)
         send_safe(message.chat.id, DONATE_REPLY)
-        return    
-    
     if is_dangerous(text): bot.send_message(message.chat.id,random.choice(SAFE_REPLIES)); return
     ok,reason=check_rate(uid)
     if not ok: bot.send_message(message.chat.id,reason); return
