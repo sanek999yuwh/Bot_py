@@ -630,14 +630,14 @@ def handle_message(message):
     if text=="👑 Админ панель":
         if uid!=ADMIN_ID: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
         send_safe(message.chat.id,"👑 *Админ-панель:*",reply_markup=admin_keyboard()); return
-            # Проверка на благодарность - показ доната один раз
+        # Проверка на благодарность - показ доната один раз
+user = get_user(uid)
+if not user.get("donate_shown", False):
     if any(word in text.lower() for word in THANKS_WORDS):
-        user = get_user(uid)
-        if not user.get("donate_shown", False):
-            user["donate_shown"] = True
-            save_user(uid)
-            send_safe(message.chat.id, DONATE_REPLY)
-            return
+        user["donate_shown"] = True
+        save_user(uid)
+        send_safe(message.chat.id, DONATE_REPLY)
+        return    
     
     if is_dangerous(text): bot.send_message(message.chat.id,random.choice(SAFE_REPLIES)); return
     ok,reason=check_rate(uid)
