@@ -549,6 +549,10 @@ def handle_callback(call):
               "🚫 *Забаненные:*\n\n"+"\n".join(f"• `{u}`" for u in banned_users)+"\n\n/unban [id] — разбанить")
         try: bot.edit_message_text(text,call.message.chat.id,call.message.message_id,parse_mode="Markdown",reply_markup=admin_keyboard())
         except Exception: pass
+    elif data == "show_help":
+        bot.answer_callback_query(call.id)
+        cmd_help(call.message)
+        return
     bot.answer_callback_query(call.id)
 
 # ===================== ХЭНДЛЕРЫ =====================
@@ -556,12 +560,24 @@ def handle_callback(call):
 def cmd_start(message):
     uid=message.from_user.id; name=message.from_user.first_name or "друг"
     get_user(uid)["name"]=name; save_user(uid)
-    send_safe(message.chat.id,
-        f"Привет, {name}! 👋\n\nЯ — *{BOT_NAME}*. Твой цифровой друг.\n\n"
-        "💬 Умные ответы\n🖼️ Анализ картинок\n📝 Суммаризация\n"
-        "📊 Таблицы\n🧠 Постоянная память\n\nКнопки внизу 👇",reply_markup=get_reply_kb(uid))
-    bot.send_message(message.chat.id,"🌐 Веб-версия:",
-        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🌐 Открыть сайт",url=WEB_URL)))
+    greeting = (
+        f"\U0001f44b Привет, {name}!\n\n"
+        f"Я \u2014 *{BOT_NAME}*, твой умный помощник.\n\n"
+        "\U0001f4ac Отвечаю на любые вопросы\n"
+        "\U0001f5bc Анализирую картинки\n"
+        "\U0001f3a8 Генерирую изображения /image\n"
+        "\U0001f324 Показываю погоду /weather\n"
+        "\u23f0 Ставлю напоминания\n"
+        "\U0001f9e0 Запоминаю тебя\n\n"
+        "Используй /help для списка команд"
+    )
+    send_safe(message.chat.id, greeting, reply_markup=get_reply_kb(uid))
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("\U0001f310 Веб-версия", url=WEB_URL),
+        InlineKeyboardButton("\U0001f4d6 Помощь", callback_data="show_help")
+    )
+    bot.send_message(message.chat.id, "\u26a1 Быстрые действия:", reply_markup=kb)
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
@@ -577,6 +593,121 @@ def cmd_ban(message):
         ban_user(int(parts[1]))
         bot.send_message(message.chat.id,f"🚫 Пользователь `{parts[1]}` забанен.",parse_mode="Markdown")
     except Exception: bot.send_message(message.chat.id,"Неверный ID.")
+
+import urllib.parse as _urlparse
+import time as _time_mod
+
+# ── /help ──────────────────────────────────────────────
+@bot.message_handler(commands=["help"])
+def cmd_help(message):
+    lines = [
+        "\U0001f4d6 *Команды Арка:*\n",
+        "/start \u2014 запустить бота",
+        "/help \u2014 список команд",
+        "/me \u2014 моя статистика",
+        "/clear \u2014 очистить историю",
+        "/model \u2014 сменить модель ИИ",
+        "/image [запрос] \u2014 нарисовать картинку",
+        "/weather [город] \u2014 погода",
+        "/remind через N мин \u2014 напоминание\n",
+        "\U0001f4ce Отправь фото для анализа",
+        "\U0001f4dd Кнопка Сжать текст \u2014 суммаризация",
+    ]
+    send_safe(message.chat.id, "\n".join(lines))
+
+# ── /me ────────────────────────────────────────────────
+@bot.message_handler(commands=["me"])
+def cmd_me(message):
+    uid = message.from_user.id
+    user = get_user(uid)
+    name = user.get("name") or message.from_user.first_name or "Неизвестно"
+    facts = user.get("facts", [])
+    model_label = MODELS.get(user.get("model", ""), user.get("model", "?"))
+    msgs = user.get("msg_count", 0)
+    joined = user.get("joined", "?")
+    last = user.get("last_active", "?")
+    hist_len = len(user.get("history", []))
+    facts_text = "\n\u2022 ".join(facts) if facts else "пока ничего"
+    lines = [
+        "\U0001f464 *Твой профиль*\n",
+        f"Имя: {name}",
+        f"Модель: {model_label}",
+        f"Сообщений: {msgs}",
+        f"В памяти: {hist_len} сообщ.",
+        f"С нами с: {joined}",
+        f"Последний визит: {last}\n",
+        f"\U0001f9e0 *Что я знаю о тебе:*\n\u2022 {facts_text}",
+    ]
+    send_safe(message.chat.id, "\n".join(lines))
+
+# ── /clear ─────────────────────────────────────────────
+@bot.message_handler(commands=["clear"])
+def cmd_clear_hist(message):
+    uid = message.from_user.id
+    get_user(uid)["history"] = []
+    save_user(uid)
+    bot.send_message(message.chat.id, "\U0001f5d1 История чата очищена!")
+
+# ── /model ─────────────────────────────────────────────
+@bot.message_handler(commands=["model"])
+def cmd_model_select(message):
+    uid = message.from_user.id
+    user = get_user(uid)
+    bot.send_message(message.chat.id, "\U0001f916 Выбери модель:",
+        reply_markup=models_keyboard(user.get("model", DEFAULT_MODEL)))
+
+# ── /image ─────────────────────────────────────────────
+@bot.message_handler(commands=["image"])
+def cmd_image(message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "Напиши запрос: /image котик в космосе")
+        return
+    prompt = parts[1].strip()
+    bot.send_chat_action(message.chat.id, "upload_photo")
+    msg = bot.send_message(message.chat.id, "\U0001f3a8 Генерирую...")
+    try:
+        seed = int(_time_mod.time()) % 99999
+        enc = _urlparse.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{enc}?width=768&height=768&nologo=true&seed={seed}&model=flux"
+        r = requests.get(url, timeout=90, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and r.content:
+            try:
+                bot.delete_message(message.chat.id, msg.message_id)
+            except Exception:
+                pass
+            bot.send_photo(message.chat.id, r.content, caption=f"\U0001f3a8 {prompt[:100]}")
+        else:
+            bot.edit_message_text("\u26a0\ufe0f Не удалось сгенерировать.", message.chat.id, msg.message_id)
+    except Exception as e:
+        print(f"[image] {e}")
+        try:
+            bot.edit_message_text("\u26a0\ufe0f Ошибка генерации.", message.chat.id, msg.message_id)
+        except Exception:
+            pass
+
+# ── /weather ───────────────────────────────────────────
+@bot.message_handler(commands=["weather"])
+def cmd_weather(message):
+    parts = message.text.split(None, 1)
+    if len(parts) < 2:
+        bot.send_message(message.chat.id, "Укажи город: /weather Москва")
+        return
+    city = parts[1].strip()
+    msg = bot.send_message(message.chat.id, "\U0001f324 Узнаю погоду...")
+    try:
+        r = requests.get(
+            f"https://wttr.in/{_urlparse.quote(city)}?format=3&lang=ru",
+            timeout=10, headers={"User-Agent": "curl/7.0"}
+        )
+        if r.status_code == 200 and r.text.strip():
+            bot.edit_message_text(f"\U0001f324 {r.text.strip()}", message.chat.id, msg.message_id)
+        else:
+            bot.edit_message_text("\u26a0\ufe0f Город не найден.", message.chat.id, msg.message_id)
+    except Exception as e:
+        print(f"[weather] {e}")
+        bot.edit_message_text("\u26a0\ufe0f Ошибка получения погоды.", message.chat.id, msg.message_id)
+
 
 @bot.message_handler(func=lambda m:True)
 def handle_message(message):
