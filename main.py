@@ -16,8 +16,15 @@ import random
 
 from shared import (
     MODELS, DEFAULT_MODEL, API_URL, MISTRAL_KEY,
-    is_dangerous, build_base_prompt, needs_search, search_web,
-    THANKS_WORDS, DONATE_REPLY, get_random_joke
+    is_dangerous, 
+    extract_name, 
+    extract_interests,
+    build_base_prompt, 
+    needs_search, 
+    search_web,
+    THANKS_WORDS, 
+    DONATE_REPLY, 
+    get_random_joke
 )
 
 app = FastAPI()
@@ -89,7 +96,7 @@ def get_session(session_id):
     except Exception as e:
         print(f"[session get] {e}")
         if conn: db_pool.putconn(conn)
-        return memory_db.get(session_id)
+        return memory_db.get(session_id, {"history": [], "model": DEFAULT_MODEL, "name": None, "facts": []})
 
 def save_session(session_id, data):
     if not db_pool:
@@ -99,7 +106,7 @@ def save_session(session_id, data):
     try:
         conn = db_pool.getconn()
         with conn.cursor() as cur:
-            cur.execute("""UPDATE sessions SET history=%s, model=%s, name=%s, facts=%s, updated_at=NOW()
+            cur.execute("""UPDATE sessions SET history=%s,model=%s,name=%s,facts=%s,updated_at=NOW()
                            WHERE session_id=%s""",
                         (json.dumps(data.get("history", [])),
                          data.get("model", DEFAULT_MODEL),
@@ -122,34 +129,6 @@ def check_rate_limit(session_id):
         return False
     user_last_msg[session_id] = now
     return True
-
-# ===================== AUTH =====================
-oauth_states = {}
-user_sessions = {}
-
-@app.get("/auth/login")
-async def auth_login():
-    state = secrets.token_urlsafe(16)
-    oauth_states[state] = True
-    url = (f"https://accounts.google.com/o/oauth2/v2/auth"
-           f"?client_id={GOOGLE_CLIENT_ID}&redirect_uri={BASE_URL}/auth/callback"
-           f"&response_type=code&scope=openid%20email%20profile&state={state}")
-    return RedirectResponse(url)
-
-@app.get("/auth/callback")
-async def auth_callback(code: str = None, state: str = None, error: str = None):
-    if error or not code or state not in oauth_states:
-        return RedirectResponse("/?error=auth_failed")
-    del oauth_states[state]
-    # ... (полная оригинальная логика OAuth — можешь вставить из старого файла)
-    return RedirectResponse("/?logged_in=1")
-
-@app.get("/auth/me")
-async def auth_me(request: Request):
-    token = request.cookies.get("ark_session")
-    if token and token in user_sessions:
-        return JSONResponse({"logged_in": True, "user": user_sessions[token]})
-    return JSONResponse({"logged_in": False})
 
 # ===================== API =====================
 class ChatRequest(BaseModel):
@@ -178,20 +157,22 @@ async def chat_stream(req: ChatRequest):
             yield f"data: {json.dumps({'delta': 'Подожди секунду...', 'done': True})}\n\n"
         return StreamingResponse(rate(), media_type="text/event-stream")
 
-    # Проверка доната
+    # Донат
     if any(w in req.message.lower() for w in THANKS_WORDS):
         async def donate_gen():
             yield f"data: {json.dumps({'delta': DONATE_REPLY, 'done': True})}\n\n"
         return StreamingResponse(donate_gen(), media_type="text/event-stream")
 
-    # Подготовка промпта
+    # Основная логика
     session = get_session(req.session_id)
     session["model"] = req.model
 
-    # Извлечение имени и фактов
-    name, new_facts = extract_name(req.message), session.get("facts", [])
+    # Извлекаем имя и интересы
+    name = extract_name(req.message)
+    facts = session.get("facts", []) if isinstance(session.get("facts"), list) else []
     if name:
         session["name"] = name
+    new_facts = extract_interests(req.message, facts)
     session["facts"] = new_facts
 
     system_prompt = build_base_prompt(name=session.get("name"), facts=new_facts)
@@ -202,6 +183,9 @@ async def chat_stream(req: ChatRequest):
             system_prompt += f"\n\nАктуальная информация:\n{ctx}"
 
     history = session.get("history", [])
+    if isinstance(history, str):
+        history = json.loads(history)
+    
     history.append({"role": "user", "content": req.message})
     if len(history) > 30:
         history = history[-20:]
@@ -219,10 +203,9 @@ async def chat_stream(req: ChatRequest):
     def generate():
         full_reply = ""
         try:
-            with requests.post(API_URL, headers={
-                "Authorization": f"Bearer {MISTRAL_KEY}",
-                "Content-Type": "application/json"
-            }, json=body, stream=True, timeout=60) as r:
+            with requests.post(API_URL,
+                    headers={"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"},
+                    json=body, stream=True, timeout=60) as r:
                 for line in r.iter_lines():
                     if not line: continue
                     line = line.decode("utf-8")
@@ -234,13 +217,13 @@ async def chat_stream(req: ChatRequest):
                         if delta:
                             full_reply += delta
                             yield f"data: {json.dumps({'delta': delta, 'done': False})}\n\n"
-                    except:
-                        continue
-            # Сохраняем ответ
+                    except: continue
+            
             if full_reply:
                 history.append({"role": "assistant", "content": full_reply})
                 session["history"] = history
                 save_session(req.session_id, session)
+            
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             print(f"[stream] {e}")
@@ -250,20 +233,16 @@ async def chat_stream(req: ChatRequest):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "db": db_pool is not None}
+    return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     try:
         with open("index.html", "r", encoding="utf-8") as f:
-            content = f.read()
-        return HTMLResponse(content)
+            return HTMLResponse(f.read())
     except:
         return HTMLResponse("<h1>index.html не найден</h1>")
 
 # ===================== ЗАПУСК =====================
-if not MISTRAL_KEY:
-    print("WARNING: MISTRAL_KEY not set")
-
 init_db()
 print("🚀 Web Арк запущен!")
