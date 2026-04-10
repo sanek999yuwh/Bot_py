@@ -340,7 +340,19 @@ async def get_models():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "db": db_pool is not None}
+    count = None
+    if db_pool:
+        conn = None
+        try:
+            conn = db_pool.getconn()
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users")
+                count = cur.fetchone()[0]
+            db_pool.putconn(conn)
+        except Exception:
+            if conn:
+                db_pool.putconn(conn)
+    return {"status": "ok", "db": db_pool is not None, "users": count}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
