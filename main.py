@@ -21,8 +21,6 @@ from shared import (
     build_base_prompt,
     needs_search, 
     search_web,
-    THANKS_WORDS, 
-    DONATE_REPLY, 
 )
 
 app = FastAPI()
@@ -126,12 +124,6 @@ def check_rate_limit(session_id):
     user_last_msg[session_id] = now
     return True
 
-def check_donate(message: str) -> str | None:
-    """Если пользователь говорит спасибо — отвечаем с донатом"""
-    t = message.lower()
-    if any(w in t for w in THANKS_WORDS):
-        return DONATE_REPLY
-    return None
 
 def _prep_history(session_id, message, model):
     session = get_session(session_id)
