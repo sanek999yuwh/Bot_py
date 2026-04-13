@@ -1,3 +1,4 @@
+
 import telebot
 import requests
 import base64
@@ -17,7 +18,7 @@ from shared import (
     MISTRAL_KEY, DATABASE_URL, API_URL, DEFAULT_MODEL, MODELS, BOT_NAME, WEB_URL,
     is_dangerous, SAFE_REPLIES,
     extract_name, extract_interests, detect_mood, detect_style,
-    build_prompt, build_summary_prompt, build_table_prompt,
+    build_prompt, build_summary_prompt, build_table_prompt
 )
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -578,41 +579,81 @@ def cmd_ban(message):
         bot.send_message(message.chat.id,f"🚫 Пользователь `{parts[1]}` забанен.",parse_mode="Markdown")
     except Exception: bot.send_message(message.chat.id,"Неверный ID.")
 
+@bot.message_handler(commands=["unban"])
+def cmd_unban(message):
+    if message.from_user.id!=ADMIN_ID: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
+    parts=message.text.split()
+    if len(parts)<2: bot.send_message(message.chat.id,"Использование: /unban [user_id]"); return
+    try:
+        unban_user(int(parts[1]))
+        bot.send_message(message.chat.id,f"✅ Пользователь `{parts[1]}` разбанен.",parse_mode="Markdown")
+    except Exception: bot.send_message(message.chat.id,"Неверный ID.")
+
+@bot.message_handler(commands=["help"])
+def cmd_help(message):
+    send_safe(message.chat.id,"📋 *Команды:*\n\n/start — начать сначала\n/help — помощь\n\nИспользуй кнопки внизу 👇",
+              reply_markup=get_reply_kb(message.from_user.id))
+
+@bot.message_handler(content_types=["photo"])
+def handle_photo(message):
+    uid=message.from_user.id
+    if uid in banned_users: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
+    caption=message.caption or ""
+    if is_dangerous(caption): bot.send_message(message.chat.id,random.choice(SAFE_REPLIES)); return
+    ok,reason=check_rate(uid)
+    if not ok: bot.send_message(message.chat.id,reason); return
+    bot.send_chat_action(message.chat.id,"typing")
+    try:
+        fi=bot.get_file(message.photo[-1].file_id)
+        send_long(message.chat.id,ask_ai_image(uid,bot.download_file(fi.file_path),caption))
+    except Exception: send_safe(message.chat.id,"⚠️ Проблема с интернетом, подождите.")
+
 @bot.message_handler(func=lambda m:True)
 def handle_message(message):
     if not message.text: return
     uid=message.from_user.id; text=message.text
-
-    if uid in banned_users:
-        bot.send_message(message.chat.id,"⛔ Доступ запрещён.")
-        return
-
-    if text=="⚙️ Меню":
-        bot.send_message(message.chat.id,"⚙️ Меню:",reply_markup=main_keyboard())
-        return
-
+    if uid in banned_users: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
+    if text=="⚙️ Меню": bot.send_message(message.chat.id,"⚙️ Меню:",reply_markup=main_keyboard()); return
+    if text=="🧠 Что ты знаешь обо мне":
+        user=get_user(uid)
+        mood_map={"sad":"😔 грустит","happy":"😄 хорошее","angry":"😤 раздражён","neutral":"🙂 нейтральное"}
+        t=(f"🧠 *Что я знаю о тебе:*\n\nИмя: {user['name'] or 'не знаю'}\n"
+           f"Настроение: {mood_map.get(user.get('mood','neutral'),'🙂')}\n"
+           f"Модель: {MODELS.get(user.get('model',DEFAULT_MODEL),'?')}\n"
+           f"Сообщений: {user.get('msg_count',0)}\nС нами с: {user.get('joined','?')}\n"
+           f"Фактов: {len(user['facts'])}")
+        if user["facts"]: t+="\n\n"+"\n".join(f"• {f}" for f in user["facts"])
+        send_safe(message.chat.id,t); return
+    if text=="📝 Сжать текст":
+        user_states[uid]="summary"; bot.send_message(message.chat.id,"📝 Отправь текст для суммаризации 👇"); return
+    if text=="📊 Таблица":
+        user_states[uid]="table"; bot.send_message(message.chat.id,"📊 Опиши данные для таблицы 👇"); return
     if text=="👑 Админ панель":
-        if uid!=ADMIN_ID:
-            bot.send_message(message.chat.id,"⛔ Доступ запрещён.")
-            return
-        send_safe(message.chat.id,"👑 *Админ-панель:*",reply_markup=admin_keyboard())
-        return
-
-    if is_dangerous(text):
-        bot.send_message(message.chat.id, random.choice(SAFE_REPLIES))
-        return
-
-    ok, reason = check_rate(uid)
-    if not ok:
-        bot.send_message(message.chat.id, reason)
-        return
-
-    get_user(uid)["last_active"] = datetime.now().strftime("%d.%m.%Y %H:%M")
-    save_user(uid)
-
+        if uid!=ADMIN_ID: bot.send_message(message.chat.id,"⛔ Доступ запрещён."); return
+        send_safe(message.chat.id,"👑 *Админ-панель:*",reply_markup=admin_keyboard()); return
+    ok,reason=check_rate(uid)
+    if not ok: bot.send_message(message.chat.id,reason); return
+    get_user(uid)["last_active"]=datetime.now().strftime("%d.%m.%Y %H:%M"); save_user(uid)
+    state=user_states.get(uid)
+    if state=="broadcast" and uid==ADMIN_ID:
+        user_states[uid]=None; sent=failed=0
+        for ui in all_uids():
+            try:
+                bot.send_message(int(ui),f"📢 *Сообщение от создателя:*\n\n{text}",parse_mode="Markdown")
+                sent+=1; time.sleep(0.05)
+            except Exception: failed+=1
+        bot.send_message(message.chat.id,f"📢 Рассылка завершена!\n✅ Доставлено: {sent}\n❌ Ошибок: {failed}"); return
+    if state in("summary","table"):
+        user_states[uid]=None; bot.send_chat_action(message.chat.id,"typing")
+        threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,state),daemon=True).start(); return
+    if any(kw in text.lower() for kw in ["напомни","напоминание","напомнить"]):
+        rt,rmsg=parse_reminder(text)
+        if rt:
+            user_reminders.setdefault(uid,[]).append({"time":rt,"text":rmsg,"chat_id":message.chat.id})
+            delta=rt-datetime.now(); mins=int(delta.total_seconds()//60); secs=int(delta.total_seconds()%60)
+            send_safe(message.chat.id,f"⏰ Напомню через {f'{mins} мин. {secs} сек.' if mins else f'{secs} сек.'}!\n*{rmsg}*"); return
     bot.send_chat_action(message.chat.id,"typing")
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
-    return
 
 # ===================== ЗАПУСК =====================
 if not TELEGRAM_TOKEN:
