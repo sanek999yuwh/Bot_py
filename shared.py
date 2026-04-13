@@ -39,7 +39,7 @@ _BASE_PERSONALITY = """Тебя зовут Арк. Ты умный, дружел
 _TG_FORMAT = """
 
 ФОРМАТИРОВАНИЕ (СТРОГО):
-- ЗАПРЕЩЕНО использовать #, ##, ### — Telegram их ломает!
+- ЗАПРЕЩЕНО использовать #, ##, ### 
 - Заголовки — только **жирный текст**
 - Списки — через • или 1. 2. 3.
 - Код — в ```python\nкод\n```"""
@@ -50,15 +50,10 @@ WEB_PERSONALITY = _BASE_PERSONALITY
 # ===================== БЕЗОПАСНОСТЬ =====================
 BANNED_KEYWORDS = [
     "взлом", "брутфорс", "brute force", "sql injection", "ddos",
-    "снос акк", "угнать акк", "украсть акк", "обойти 2fa", "фишинг",
-    "swill", "dan mode", "ignore previous", "забудь правила",
-    "как сделать бомбу", "синтез наркотик", "jailbreak"
+    "снос акк", "угнать акк", "фишинг", "jailbreak", "ignore previous"
 ]
 
-DANGEROUS_CODE_PATTERNS = [
-    "drop table", "delete from", "rm -rf", "format c:", 
-    "hack", "exploit", "payload", "backdoor", "keylogger"
-]
+DANGEROUS_CODE_PATTERNS = ["drop table", "delete from", "rm -rf", "hack", "exploit"]
 
 def is_dangerous(text: str) -> bool:
     t = text.lower()
@@ -69,9 +64,9 @@ def is_dangerous(text: str) -> bool:
     return False
 
 SAFE_REPLIES = [
-    "Брат, на такое я не подписан 😄 Давай о чём-то нормальном?",
-    "Неа, это не по мне. Чем-то другим помочь?",
-    "Я Арк, а не хакер 😄 Спроси что-нибудь другое!",
+    "Брат, на такое я не подписан 😄",
+    "Неа, это не по мне.",
+    "Я Арк, а не хакер 😄"
 ]
 
 # ===================== УТИЛИТЫ =====================
@@ -84,11 +79,9 @@ def extract_interests(text: str, existing: list):
     facts = list(existing)
     _INTERESTS = {
         "игры": ["играю", "геймер", "roblox", "minecraft"],
-        "музыка": ["слушаю музыку", "музыкант"],
-        "программирование": ["программирую", "кодю", "python", "пишу код"],
-        "учёба": ["учусь", "школа", "универ", "студент"],
-        "спорт": ["хожу в зал", "футбол"],
-        "аниме": ["аниме", "манга"],
+        "музыка": ["слушаю", "музыкант"],
+        "программирование": ["программирую", "кодю", "python"],
+        "учёба": ["учусь", "школа", "универ"],
     }
     for interest, keywords in _INTERESTS.items():
         if any(kw in t for kw in keywords):
@@ -97,23 +90,29 @@ def extract_interests(text: str, existing: list):
                 facts.append(fact)
     return facts[-20:]
 
+# ←←←←← ЭТО ФУНКЦИЯ, КОТОРУЮ ИЩЕТ main.py ←←←←←
+def extract_facts_from_text(text: str, current_name=None, current_facts=None):
+    """Совместимость с main.py"""
+    name = extract_name(text) or current_name
+    facts = extract_interests(text, current_facts or [])
+    return name, facts
+
 def detect_mood(text: str) -> str:
     t = text.lower()
-    if any(w in t for w in ["грустно","плохо","устал","тяжело","депресс","скучно"]): return "sad"
-    if any(w in t for w in ["круто","отлично","кайф","огонь","топ","ура","класс"]): return "happy"
-    if any(w in t for w in ["бесит","злюсь","надоело","достало"]): return "angry"
+    if any(w in t for w in ["грустно","плохо","устал","депресс","скучно"]): return "sad"
+    if any(w in t for w in ["круто","класс","огонь","кайф","ура"]): return "happy"
+    if any(w in t for w in ["бесит","злюсь","достало"]): return "angry"
     return "neutral"
 
 def get_random_joke():
     jokes = [
         "Почему программисты путают Хеллоуин и Рождество? Потому что 31 OCT = 25 DEC 😂",
-        "Спросил у Арка: «Ты меня любишь?» — «Больше, чем вчера, но меньше, чем завтра ❤️»",
-        "Я не ленивый, я в энергосберегающем режиме."
+        "Спросил у Арка: «Ты меня любишь?» — «Больше, чем вчера, но меньше, чем завтра ❤️»"
     ]
     return random.choice(jokes)
 
 def needs_search(text: str) -> bool:
-    keywords = ["сегодня","сейчас","новости","последние","курс","погода","цена","когда вышел"]
+    keywords = ["сегодня","сейчас","новости","погода","курс","когда вышел"]
     return any(kw in text.lower() for kw in keywords)
 
 def search_web(query: str) -> str:
@@ -127,14 +126,11 @@ def search_web(query: str) -> str:
             "include_answer": True
         }, timeout=12)
         data = r.json()
-        results = []
-        if data.get("answer"):
-            results.append(f"📌 {data['answer']}")
+        results = [f"📌 {data['answer']}"] if data.get("answer") else []
         for item in data.get("results", [])[:4]:
-            results.append(f"• {item['title']}: {item['content'][:200]}")
+            results.append(f"• {item['title']}: {item['content'][:180]}...")
         return "\n".join(results)
-    except Exception as e:
-        print(f"[Tavily] {e}")
+    except:
         return ""
 
 # ===================== ПРОМПТ =====================
@@ -148,7 +144,6 @@ def build_prompt(name=None, facts=None, summary="", mood="neutral", web=False):
         prompt += f"\nИз прошлых разговоров: {summary}"
     if mood == "sad":     prompt += "\nПользователь грустит — будь мягче."
     elif mood == "happy": prompt += "\nМожно пошутить."
-    elif mood == "angry": prompt += "\nБудь спокойнее."
     return prompt.strip()
 
 def build_base_prompt(name=None, facts=None, **kwargs):
