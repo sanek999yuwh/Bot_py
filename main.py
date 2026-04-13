@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests, json, os, time, threading, subprocess, sys, random
+from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
 import psycopg2
@@ -101,9 +102,32 @@ async def chat_stream(req: ChatRequest):
 async def get_models():
     return {"models": MODELS, "default": DEFAULT_MODEL}
 
+@app.post("/api/clear")
+async def clear_session(req: Request):
+    data = await req.json()
+    session_id = data.get("session_id", "")
+    if session_id in memory_db:
+        memory_db[session_id] = {"history": [], "model": DEFAULT_MODEL, "name": None, "facts": []}
+    return {"ok": True}
+
+@app.get("/auth/me")
+async def auth_me():
+    return JSONResponse({"logged_in": False})
+
+@app.get("/auth/login")
+async def auth_login():
+    return JSONResponse({"error": "Google OAuth не настроен"}, status_code=501)
+
+@app.get("/auth/logout")
+async def auth_logout():
+    return JSONResponse({"ok": True})
+
 @app.get("/")
 async def index():
-    return HTMLResponse("<h1>Арк работает</h1>")
+    html_path = Path(__file__).parent / "index.html"
+    if html_path.exists():
+        return HTMLResponse(html_path.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>index.html не найден рядом с main.py</h1>", status_code=404)
 
 # ===================== ЗАПУСК БОТА =====================
 def run_telegram_bot():
