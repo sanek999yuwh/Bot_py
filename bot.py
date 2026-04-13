@@ -1,4 +1,3 @@
-
 import telebot
 import requests
 import base64
@@ -46,7 +45,7 @@ def init_db():
                     history JSONB DEFAULT '[]', facts JSONB DEFAULT '[]',
                     summary TEXT DEFAULT '', style TEXT DEFAULT 'neutral',
                     mood TEXT DEFAULT 'neutral', model TEXT DEFAULT 'mistral-medium-latest',
-                    msg_count INTEGER DEFAULT 0, joined TEXT, last_active TEXT, donate_shown BOOLEAN DEFAULT FALSE
+                    msg_count INTEGER DEFAULT 0, joined TEXT, last_active TEXT
                 )
             """)
             conn.commit()
@@ -168,11 +167,10 @@ def _save_user_db(uid, user):
         conn = _gc()
         with conn.cursor() as cur:
             cur.execute("""UPDATE bot_users SET name=%s,history=%s,facts=%s,summary=%s,
-    style=%s,mood=%s,model=%s,msg_count=%s,last_active=%s,donate_shown=%s WHERE uid=%s""",
+    style=%s,mood=%s,model=%s,msg_count=%s,last_active=%s WHERE uid=%s""",
     (user.get("name"),json.dumps(user.get("history",[])),json.dumps(user.get("facts",[])),
      user.get("summary",""),user.get("style","neutral"),user.get("mood","neutral"),
-     user.get("model",DEFAULT_MODEL),user.get("msg_count",0),user.get("last_active",""),
-     user.get("donate_shown",False),uid)) 
+     user.get("model",DEFAULT_MODEL),user.get("msg_count",0),user.get("last_active",""),uid))
     except Exception as e:
         print(f"[save_user] {e}")
     finally:
