@@ -17,7 +17,7 @@ from shared import (
     MISTRAL_KEY, DATABASE_URL, API_URL, DEFAULT_MODEL, MODELS, BOT_NAME, WEB_URL,
     is_dangerous, SAFE_REPLIES,
     extract_name, extract_interests, detect_mood, detect_style,
-    build_prompt, build_summary_prompt, build_table_prompt, THANKS_WORDS, DONATE_REPLY
+    build_prompt, build_summary_prompt, build_table_prompt,
 )
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -597,15 +597,6 @@ def handle_message(message):
             return
         send_safe(message.chat.id,"👑 *Админ-панель:*",reply_markup=admin_keyboard())
         return
-
-    # Проверка на благодарность
-    user = get_user(uid)
-    if not user.get("donate_shown", False):
-        if any(word in text.lower() for word in THANKS_WORDS):
-            user["donate_shown"] = True
-            save_user(uid)
-            send_safe(message.chat.id, DONATE_REPLY)
-            return
 
     if is_dangerous(text):
         bot.send_message(message.chat.id, random.choice(SAFE_REPLIES))
