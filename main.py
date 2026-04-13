@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,21 +6,19 @@ import requests
 import json
 import os
 import time
-import threading
 import secrets
 from collections import defaultdict
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import psycopg2.pool
+import random
 
 from shared import (
     MODELS, DEFAULT_MODEL, API_URL, MISTRAL_KEY,
-    is_dangerous, 
-    extract_facts_from_text, 
-    build_base_prompt,
-    needs_search, 
-    search_web,
+    is_dangerous, extract_name, extract_interests,
+    build_base_prompt, needs_search, search_web,
+    SAFE_REPLIES
 )
 
 app = FastAPI()
@@ -31,7 +29,6 @@ GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 BASE_URL             = os.environ.get("BASE_URL", "https://botpy-production-6832.up.railway.app")
 DATABASE_URL         = os.environ.get("DATABASE_URL", "")
-GROQ_API_KEY         = os.environ.get("GROQ_API_KEY", "")
 
 # ===================== POSTGRESQL =====================
 db_pool   = None
@@ -55,191 +52,140 @@ def init_db():
                 picture TEXT, created_at TIMESTAMP DEFAULT NOW())""")
             conn.commit()
         db_pool.putconn(conn)
-        print("PostgreSQL connected")
+        print("✅ PostgreSQL connected")
         return True
     except Exception as e:
         print(f"PostgreSQL error: {e}")
-        db_pool = None
         return False
 
 def get_session(session_id):
-    if not db_pool: return _mem_get(session_id)
+    if not db_pool:
+        if session_id not in memory_db:
+            memory_db[session_id] = {
+                "session_id": session_id, "history": [], "model": DEFAULT_MODEL,
+                "name": None, "facts": [], "joined": datetime.now().strftime("%d.%m.%Y")
+            }
+        return memory_db[session_id]
+    
     conn = None
     try:
         conn = db_pool.getconn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM sessions WHERE session_id=%s", (session_id,))
             row = cur.fetchone()
-            if row: db_pool.putconn(conn); return dict(row)
+            if row:
+                db_pool.putconn(conn)
+                return dict(row)
+            
             now = datetime.now().strftime("%d.%m.%Y")
             cur.execute("""INSERT INTO sessions (session_id,history,model,name,facts,joined)
                            VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
                         (session_id, json.dumps([]), DEFAULT_MODEL, None, json.dumps([]), now))
-            row = cur.fetchone(); conn.commit(); db_pool.putconn(conn)
+            row = cur.fetchone()
+            conn.commit()
+            db_pool.putconn(conn)
             return dict(row)
     except Exception as e:
         print(f"[session get] {e}")
         if conn: db_pool.putconn(conn)
-        return _mem_get(session_id)
+        return memory_db.get(session_id)
 
 def save_session(session_id, data):
-    if not db_pool: memory_db[session_id] = data; return
+    if not db_pool:
+        memory_db[session_id] = data
+        return
     conn = None
     try:
         conn = db_pool.getconn()
         with conn.cursor() as cur:
-            history = data.get("history", [])
-            if isinstance(history, str): history = json.loads(history)
-            facts = data.get("facts", [])
-            if isinstance(facts, str): facts = json.loads(facts)
-            cur.execute("""UPDATE sessions SET history=%s,model=%s,name=%s,facts=%s,updated_at=NOW()
+            cur.execute("""UPDATE sessions SET history=%s, model=%s, name=%s, facts=%s, updated_at=NOW()
                            WHERE session_id=%s""",
-                        (json.dumps(history), data.get("model", DEFAULT_MODEL),
-                         data.get("name"), json.dumps(facts), session_id))
+                        (json.dumps(data.get("history", [])),
+                         data.get("model", DEFAULT_MODEL),
+                         data.get("name"),
+                         json.dumps(data.get("facts", [])),
+                         session_id))
             conn.commit()
         db_pool.putconn(conn)
     except Exception as e:
         print(f"[session save] {e}")
         if conn: db_pool.putconn(conn)
 
-def _mem_get(session_id):
-    if session_id not in memory_db:
-        memory_db[session_id] = {
-            "session_id": session_id, "history": [], "model": DEFAULT_MODEL,
-            "name": None, "facts": [], "joined": datetime.now().strftime("%d.%m.%Y"),
-        }
-    return memory_db[session_id]
-
-# ===================== OAUTH =====================
-oauth_states  = {}
-user_sessions = {}
-
-# ===================== UTILS =====================
+# ===================== RATE LIMIT =====================
 RATE_LIMIT_SECONDS = 2
 user_last_msg = defaultdict(float)
 
 def check_rate_limit(session_id):
     now = time.time()
-    if now - user_last_msg[session_id] < RATE_LIMIT_SECONDS: return False
+    if now - user_last_msg[session_id] < RATE_LIMIT_SECONDS:
+        return False
     user_last_msg[session_id] = now
     return True
-
-
-def _prep_history(session_id, message, model):
-    session = get_session(session_id)
-    session["model"] = model
-    facts = session.get("facts", [])
-    if isinstance(facts, str): facts = json.loads(facts)
-    name, new_facts = extract_facts_from_text(message, session.get("name"), facts)
-    session["name"] = name; session["facts"] = new_facts
-    save_session(session_id, session)
-
-    history = session.get("history", [])
-    if isinstance(history, str): history = json.loads(history)
-
-    system_prompt = build_base_prompt(name=session.get("name"), facts=new_facts)
-    if needs_search(message):
-        ctx = search_web(message)
-        if ctx: system_prompt += f"\n\nАктуальная информация:\n{ctx}\nИспользуй если релевантно."
-
-    history.append({"role": "user", "content": message})
-    if len(history) > 30: history = history[-20:]
-    session["history"] = history
-    save_session(session_id, session)
-    return [{"role": "system", "content": system_prompt}, *history], session
-
-# ===================== AUTH =====================
-@app.get("/auth/login")
-async def auth_login():
-    state = secrets.token_urlsafe(16)
-    oauth_states[state] = True
-    url = ("https://accounts.google.com/o/oauth2/v2/auth"
-           f"?client_id={GOOGLE_CLIENT_ID}&redirect_uri={BASE_URL}/auth/callback"
-           f"&response_type=code&scope=openid%20email%20profile&state={state}")
-    return RedirectResponse(url)
-
-@app.get("/auth/callback")
-async def auth_callback(code: str = None, state: str = None, error: str = None):
-    if error or not code or state not in oauth_states:
-        return RedirectResponse("/?error=auth_failed")
-    del oauth_states[state]
-    try:
-        token = requests.post("https://oauth2.googleapis.com/token", data={
-            "code": code, "client_id": GOOGLE_CLIENT_ID, "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri": f"{BASE_URL}/auth/callback", "grant_type": "authorization_code",
-        }, timeout=10).json().get("access_token")
-        info = requests.get("https://www.googleapis.com/oauth2/v2/userinfo",
-                            headers={"Authorization": f"Bearer {token}"}, timeout=10).json()
-        st = secrets.token_urlsafe(32)
-        user_sessions[st] = {"email": info.get("email",""), "name": info.get("name",""),
-                              "picture": info.get("picture",""), "id": info.get("id","")}
-        if db_pool:
-            conn = None
-            try:
-                conn = db_pool.getconn()
-                with conn.cursor() as cur:
-                    cur.execute("""INSERT INTO users (google_id,email,name,picture) VALUES (%s,%s,%s,%s)
-                                   ON CONFLICT (google_id) DO UPDATE SET email=EXCLUDED.email,
-                                   name=EXCLUDED.name, picture=EXCLUDED.picture""",
-                                (info.get("id"), info.get("email"), info.get("name"), info.get("picture")))
-                conn.commit(); db_pool.putconn(conn)
-            except Exception as e:
-                print(f"[user save] {e}")
-                if conn: db_pool.putconn(conn)
-        resp = RedirectResponse("/?logged_in=1")
-        resp.set_cookie("ark_session", st, max_age=86400*30, httponly=True, samesite="lax")
-        return resp
-    except Exception as e:
-        print(f"[auth] {e}")
-        return RedirectResponse("/?error=token_failed")
-
-@app.get("/auth/me")
-async def auth_me(request: Request):
-    token = request.cookies.get("ark_session")
-    if token and token in user_sessions:
-        return JSONResponse({"logged_in": True, "user": user_sessions[token]})
-    return JSONResponse({"logged_in": False})
-
-@app.get("/auth/logout")
-async def auth_logout(request: Request):
-    token = request.cookies.get("ark_session")
-    if token in user_sessions: del user_sessions[token]
-    resp = RedirectResponse("/")
-    resp.delete_cookie("ark_session")
-    return resp
 
 # ===================== API =====================
 class ChatRequest(BaseModel):
     message: str
     session_id: str
     model: str = DEFAULT_MODEL
+    temperature: float = 0.85
 
-class ClearRequest(BaseModel):
-    session_id: str
+@app.get("/api/models")
+async def get_models():
+    return {"models": MODELS, "default": DEFAULT_MODEL}
+
+@app.get("/api/joke")
+async def api_joke():
+    from shared import get_random_joke
+    return {"joke": get_random_joke()}
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
     if is_dangerous(req.message):
         async def danger():
-            yield f"data: {json.dumps({'delta':'Брат, на такое я не подписан 😄','done':False})}\n\n"
-            yield f"data: {json.dumps({'done':True})}\n\n"
+            yield f"data: {json.dumps({'delta': random.choice(SAFE_REPLIES), 'done': True})}\n\n"
         return StreamingResponse(danger(), media_type="text/event-stream")
+
     if not check_rate_limit(req.session_id):
         async def rate():
-            yield f"data: {json.dumps({'delta':'Подожди секунду...','done':False})}\n\n"
-            yield f"data: {json.dumps({'done':True})}\n\n"
+            yield f"data: {json.dumps({'delta': 'Подожди секунду...', 'done': True})}\n\n"
         return StreamingResponse(rate(), media_type="text/event-stream")
 
-    donate = check_donate(req.message)
-    if donate:
-        async def donate_gen():
-            yield f"data: {json.dumps({'delta': donate, 'done': False})}\n\n"
-            yield f"data: {json.dumps({'done': True})}\n\n"
-        return StreamingResponse(donate_gen(), media_type="text/event-stream")
+    # Основная логика чата
+    session = get_session(req.session_id)
+    session["model"] = req.model
 
-    messages, session = _prep_history(req.session_id, req.message, req.model)
-    body = {"model": session.get("model", DEFAULT_MODEL), "messages": messages,
-            "max_tokens": 4000, "temperature": 0.85, "stream": True}
+    name = extract_name(req.message)
+    facts = session.get("facts", []) if isinstance(session.get("facts"), list) else []
+    if name:
+        session["name"] = name
+
+    new_facts = extract_interests(req.message, facts)
+    session["facts"] = new_facts
+
+    system_prompt = build_base_prompt(name=session.get("name"), facts=new_facts)
+
+    if needs_search(req.message):
+        ctx = search_web(req.message)
+        if ctx:
+            system_prompt += f"\n\nАктуальная информация:\n{ctx}"
+
+    history = session.get("history", [])
+    if isinstance(history, str):
+        history = json.loads(history)
+
+    history.append({"role": "user", "content": req.message})
+    if len(history) > 30:
+        history = history[-20:]
+
+    messages = [{"role": "system", "content": system_prompt}, *history]
+
+    body = {
+        "model": req.model,
+        "messages": messages,
+        "max_tokens": 4000,
+        "temperature": req.temperature,
+        "stream": True
+    }
 
     def generate():
         full_reply = ""
@@ -254,123 +200,36 @@ async def chat_stream(req: ChatRequest):
                     ds = line[6:]
                     if ds == "[DONE]": break
                     try:
-                        delta = json.loads(ds)["choices"][0]["delta"].get("content","")
+                        delta = json.loads(ds)["choices"][0]["delta"].get("content", "")
                         if delta:
                             full_reply += delta
-                            yield f"data: {json.dumps({'delta':delta,'done':False})}\n\n"
-                    except Exception: continue
+                            yield f"data: {json.dumps({'delta': delta, 'done': False})}\n\n"
+                    except: continue
+
             if full_reply:
-                sess = get_session(req.session_id)
-                hist = sess.get("history", [])
-                if isinstance(hist, str): hist = json.loads(hist)
-                hist.append({"role": "assistant", "content": full_reply})
-                sess["history"] = hist
-                save_session(req.session_id, sess)
-            yield f"data: {json.dumps({'done':True})}\n\n"
+                history.append({"role": "assistant", "content": full_reply})
+                session["history"] = history
+                save_session(req.session_id, session)
+
+            yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as e:
             print(f"[stream] {e}")
-            yield f"data: {json.dumps({'delta':'Ошибка соединения.','done':False})}\n\n"
-            yield f"data: {json.dumps({'done':True})}\n\n"
+            yield f"data: {json.dumps({'delta': 'Ошибка соединения.', 'done': True})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
-@app.post("/api/chat")
-async def chat(req: ChatRequest):
-    if is_dangerous(req.message): return {"reply": "Брат, на такое я не подписан 😄", "error": False}
-    if not check_rate_limit(req.session_id): return {"reply": "Подожди секунду...", "error": True}
-    donate = check_donate(req.message)
-    if donate: return {"reply": donate, "error": False}
-    messages, session = _prep_history(req.session_id, req.message, req.model)
-    try:
-        r = requests.post(API_URL,
-              headers={"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"},
-              json={"model": session.get("model", DEFAULT_MODEL), "messages": messages,
-                    "max_tokens": 4000, "temperature": 0.85}, timeout=60)
-        data = r.json()
-        if "choices" in data:
-            reply = data["choices"][0]["message"]["content"].strip()
-            sess  = get_session(req.session_id)
-            hist  = sess.get("history", [])
-            if isinstance(hist, str): hist = json.loads(hist)
-            hist.append({"role": "assistant", "content": reply})
-            sess["history"] = hist; save_session(req.session_id, sess)
-            return {"reply": reply, "error": False}
-        return {"reply": "Пустой ответ, попробуй ещё раз.", "error": True}
-    except Exception as e:
-        print(f"[chat] {e}")
-        return {"reply": "Ошибка соединения.", "error": True}
-
-@app.post("/api/voice")
-async def transcribe_voice(file: UploadFile = File(...), session_id: str = Form("")):
-    if not GROQ_API_KEY:
-        return JSONResponse({"error": "GROQ_API_KEY не задан"}, status_code=500)
-    try:
-        audio_bytes = await file.read()
-        r = requests.post(
-            "https://api.groq.com/openai/v1/audio/transcriptions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            files={"file": (file.filename or "voice.webm", audio_bytes, file.content_type or "audio/webm")},
-            data={"model": "whisper-large-v3", "language": "ru", "response_format": "json"},
-            timeout=30)
-        text = r.json().get("text", "").strip()
-        if text: return {"text": text}
-        return JSONResponse({"error": "Пустой ответ"}, status_code=500)
-    except Exception as e:
-        print(f"[voice] {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.post("/api/clear")
-async def clear_history(req: ClearRequest):
-    session = get_session(req.session_id)
-    session["history"] = []
-    save_session(req.session_id, session)
-    return {"ok": True}
-
-@app.get("/api/models")
-async def get_models():
-    return {"models": MODELS, "default": DEFAULT_MODEL}
-
 @app.get("/health")
 async def health():
-    count = None
-    if db_pool:
-        conn = None
-        try:
-            conn = db_pool.getconn()
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM users")
-                count = cur.fetchone()[0]
-            db_pool.putconn(conn)
-        except Exception:
-            if conn:
-                db_pool.putconn(conn)
-    return {"status": "ok", "db": db_pool is not None, "users": count}
+    return {"status": "ok"}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    with open("index.html", "r", encoding="utf-8") as f:
-        content = f.read()
-    return HTMLResponse(content=content, headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache", "Expires": "0"})
+    try:
+        with open("index.html", "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    except:
+        return HTMLResponse("<h1>index.html не найден</h1>")
 
 # ===================== ЗАПУСК =====================
-if not MISTRAL_KEY:
-    print("WARNING: MISTRAL_KEY not set")
-
 init_db()
-
-def run_bot():
-    import subprocess
-    import sys
-    while True:
-        try:
-            # Запускаем bot.py как отдельный процесс
-            subprocess.run([sys.executable, "bot.py"], check=True)
-        except subprocess.CalledProcessError:
-            print("[bot] Упал с ошибкой — перезапуск через 5 сек.")
-        except Exception as e:
-            print(f"[bot] Ошибка запуска: {e}")
-        time.sleep(5)
-
-threading.Thread(target=run_bot, daemon=True).start()
+print("🚀 Web Арк запущен!")
