@@ -3,7 +3,7 @@
 # ============================================================
 # Найди в bot.py строку с WEB_URL и замени на:
 
-WEB_URL = "https://botpy-production-6832.up.railway.app"
+WEB_URL = "web-production-64e44.up.railway.app"
 
 # Telegram открывает ссылки в браузере если добавить
 # параметр ?start — но надёжнее всего использовать
