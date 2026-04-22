@@ -13,7 +13,7 @@ DATABASE_URL   = os.environ.get("DATABASE_URL", "")
 API_URL        = "https://api.mistral.ai/v1/chat/completions"
 DEFAULT_MODEL  = "mistral-medium-latest"
 BOT_NAME       = "Арк"
-WEB_URL        = os.environ.get("BASE_URL", "https://botpy-production-6832.up.railway.app")
+WEB_URL        = os.environ.get("BASE_URL", "web-production-64e44.up.railway.app")
 
 MODELS = {
     "mistral-small-latest":  "⚡ Small — быстрый",
