@@ -653,8 +653,9 @@ def handle_message(message):
     bot.send_chat_action(message.chat.id,"typing")
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
 
-# ===================== FASTAPI + BOT =====================
+# ===================== FASTAPI + СТАТИЧЕСКИЙ index.html =====================
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 import threading
 import uvicorn
@@ -662,37 +663,12 @@ import os
 
 app = FastAPI(title=BOT_NAME)
 
-# ===================== ВЕБ-СТРАНИЦА =====================
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{BOT_NAME} — Веб версия</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; text-align: center; padding: 60px 20px; background: #0a0a0a; color: #ffffff; }}
-            h1 {{ color: #00ff9d; }}
-            .status {{ color: #00ff9d; font-size: 1.2em; }}
-        </style>
-    </head>
-    <body>
-        <h1>👋 Привет!</h1>
-        <h2>{BOT_NAME}</h2>
-        <p class="status">✅ Бот успешно работает</p>
-        <p>Веб-сервер запущен и отвечает на запросы.</p>
-        <br>
-        <p>Открыть бота в Telegram:</p>
-        <p><a href="https://t.me/{BOT_NAME}" style="color:#00ff9d; font-size:1.1em;">@{BOT_NAME}</a></p>
-    </body>
-    </html>
-    """
-    return html
+# Монтируем все файлы из корня проекта как статические
+# index.html будет открываться автоматически по адресу /
+app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 
-# ===================== ЗАПУСК БОТА В ОТДЕЛЬНОМ ПОТОКЕ =====================
+# ===================== ЗАПУСК БОТА =====================
 def run_bot():
     print(f"🚀 {BOT_NAME} — Polling запущен в фоне")
     while True:
@@ -714,13 +690,12 @@ if __name__ == "__main__":
         load_banned()
         print(f"✅ {BOT_NAME} инициализирован")
 
-        # Запускаем Telegram-бота в отдельном потоке
-        bot_thread = threading.Thread(target=run_bot, daemon=True)
-        bot_thread.start()
+        # Запускаем Telegram бота в отдельном потоке
+        threading.Thread(target=run_bot, daemon=True).start()
 
-        # Запускаем FastAPI сервер
+        # Запускаем веб-сервер
         port = int(os.environ.get("PORT", 8000))
-        print(f"🌐 FastAPI запущен на порту {port}")
+        print(f"🌐 Веб-сервер запущен на порту {port} — index.html подключён")
 
         uvicorn.run(
             "bot:app", 
