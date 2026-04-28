@@ -652,96 +652,20 @@ def handle_message(message):
             send_safe(message.chat.id,f"⏰ Напомню через {f'{mins} мин. {secs} сек.' if mins else f'{secs} сек.'}!\n*{rmsg}*"); return
     bot.send_chat_action(message.chat.id,"typing")
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
-# ===================== FASTAPI + FRONTEND =====================
-from fastapi import FastAPI, Request
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
-import threading
-import uvicorn
-import os
-import json
-
-app = FastAPI(title=BOT_NAME)
-
-# Подключаем твой index.html и все файлы из корня
-app.mount("/", StaticFiles(directory=".", html=True), name="static")
-
-
-# ===================== ПРОСТЫЕ API ЭНДПОИНТЫ =====================
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "users": user_count()}
-
-@app.get("/api/models")
-async def get_models():
-    return {
-        "models": MODELS,
-        "default": DEFAULT_MODEL
-    }
-
-@app.post("/api/chat")
-async def chat_normal(request: Request):
-    data = await request.json()
-    message = data.get("message", "")
-    session_id = data.get("session_id", "default")
-    chosen_model = data.get("model", DEFAULT_MODEL)
-
-    # Здесь можно добавить логику сохранения по session_id, если захочешь
-    # Пока просто отвечаем через ask_ai
-    # (Для упрощения пока используем threading как в боте)
-
-    return JSONResponse({"reply": "Функция чата в разработке. Пока работает только Telegram-бот."})
-
-# Простая заглушка для streaming (чтобы не падало)
-@app.post("/api/chat/stream")
-async def chat_stream(request: Request):
-    data = await request.json()
-    message = data.get("message", "")
+)
+# ===================== ЗАПУСК БОТА =====================
+if not TELEGRAM_TOKEN:
+    print("❌ TELEGRAM_TOKEN не задан")
+elif not MISTRAL_KEY:
+    print("❌ MISTRAL_KEY не задан")
+else:
+    init_db()
+    load_banned()
+    print(f"✅ {BOT_NAME} успешно запущен!")
     
-    # Возвращаем простой поток (можно улучшить позже)
-    async def event_stream():
-        yield 'data: {"delta": "Я получил твоё сообщение: ' + message[:100] + '..."}\n\n'
-        yield 'data: {"delta": "\\n\\nПока веб-чат находится в разработке. Полноценный ответ скоро будет."}\n\n'
-        yield 'data: {"done": true}\n\n'
-
-    return event_stream()
-
-@app.post("/api/voice")
-async def voice_transcribe(request: Request):
-    # Заглушка для голоса
-    return JSONResponse({"text": "Голосовое сообщение получено (заглушка). Пока не реализовано."})
-
-@app.post("/api/clear")
-async def clear_session(request: Request):
-    return JSONResponse({"status": "cleared"})
-
-
-# ===================== ЗАПУСК БОТА В ПОТОКЕ =====================
-def run_bot():
-    print(f"🚀 {BOT_NAME} — Polling запущен в фоне")
     while True:
         try:
             bot.infinity_polling(timeout=30, long_polling_timeout=25)
         except Exception as e:
-            print(f"[Polling Error] {e} — перезапуск через 5 сек...")
+            print(f"[polling] Ошибка: {e} — перезапуск через 5 сек.")
             time.sleep(5)
-
-
-# ===================== MAIN =====================
-if __name__ == "__main__":
-    if not TELEGRAM_TOKEN:
-        print("❌ TELEGRAM_TOKEN не задан!")
-    elif not MISTRAL_KEY:
-        print("❌ MISTRAL_KEY не задан!")
-    else:
-        init_db()
-        load_banned()
-        print(f"✅ {BOT_NAME} инициализирован")
-
-        threading.Thread(target=run_bot, daemon=True).start()
-
-        port = int(os.environ.get("PORT", 8000))
-        print(f"🌐 Веб-сервер запущен на порту {port}")
-
-        uvicorn.run("bot:app", host="0.0.0.0", port=port, log_level="info")
