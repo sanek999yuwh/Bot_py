@@ -652,7 +652,6 @@ def handle_message(message):
             send_safe(message.chat.id,f"⏰ Напомню через {f'{mins} мин. {secs} сек.' if mins else f'{secs} сек.'}!\n*{rmsg}*"); return
     bot.send_chat_action(message.chat.id,"typing")
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
-)
 # ===================== ЗАПУСК БОТА =====================
 if not TELEGRAM_TOKEN:
     print("❌ TELEGRAM_TOKEN не задан")
