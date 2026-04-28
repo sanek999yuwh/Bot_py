@@ -553,14 +553,21 @@ def handle_callback(call):
 # ===================== ХЭНДЛЕРЫ =====================
 @bot.message_handler(commands=["start"])
 def cmd_start(message):
-    uid=message.from_user.id; name=message.from_user.first_name or "друг"
-    get_user(uid)["name"]=name; save_user(uid)
+    uid = message.from_user.id
+    name = message.from_user.first_name or "друг"
+    
+    get_user(uid)["name"] = name
+    save_user(uid)
+
     send_safe(message.chat.id,
-        f"Привет, {name}! 👋\n\nЯ — *{BOT_NAME}*. Твой цифровой друг.\n\n"
-        "💬 Умные ответы\n🖼️ Анализ картинок\n📝 Суммаризация\n"
-        "📊 Таблицы\n🧠 Постоянная память\n\nКнопки внизу 👇",reply_markup=get_reply_kb(uid))
-    bot.send_message(message.chat.id,"🌐 Веб-версия:",
-        reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("🌐 Открыть сайт",url=WEB_URL)))
+        f"Привет, {name}! 👋\n\n"
+        f"Я — *{BOT_NAME}*. Твой цифровой друг.\n\n"
+        "💬 Умные ответы\n"
+        "🖼️ Анализ картинок\n"
+        "📝 Сжатие текста и таблицы\n"
+        "🧠 Хорошая память о тебе\n\n"
+        "Просто пиши мне что угодно 👇",
+        reply_markup=get_reply_kb(uid))
 
 @bot.message_handler(commands=["admin"])
 def cmd_admin(message):
