@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 from shared import (
-    MISTRAL_KEY, DATABASE_URL, API_URL, DEFAULT_MODEL, MODELS, BOT_NAME, WEB_URL,
+    MISTRAL_KEY, DATABASE_URL, API_URL, DEFAULT_MODEL, MODELS, BOT_NAME,
     is_dangerous, SAFE_REPLIES,
     extract_name, extract_interests, detect_mood, detect_style,
     build_prompt, build_summary_prompt, build_table_prompt
