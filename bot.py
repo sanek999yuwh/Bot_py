@@ -653,18 +653,78 @@ def handle_message(message):
     bot.send_chat_action(message.chat.id,"typing")
     threading.Thread(target=ask_ai,args=(uid,text,message.chat.id,"chat"),daemon=True).start()
 
-# ===================== ЗАПУСК =====================
-if not TELEGRAM_TOKEN:
-    print("❌ TELEGRAM_TOKEN не задан")
-elif not MISTRAL_KEY:
-    print("❌ MISTRAL_KEY не задан")
-else:
-    init_db()
-    load_banned()
-    print(f"✅ {BOT_NAME} запущен!")
+# ===================== FASTAPI + BOT =====================
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+import threading
+import uvicorn
+import os
+
+app = FastAPI(title=BOT_NAME)
+
+# ===================== ВЕБ-СТРАНИЦА =====================
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{BOT_NAME} — Веб версия</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; text-align: center; padding: 60px 20px; background: #0a0a0a; color: #ffffff; }}
+            h1 {{ color: #00ff9d; }}
+            .status {{ color: #00ff9d; font-size: 1.2em; }}
+        </style>
+    </head>
+    <body>
+        <h1>👋 Привет!</h1>
+        <h2>{BOT_NAME}</h2>
+        <p class="status">✅ Бот успешно работает</p>
+        <p>Веб-сервер запущен и отвечает на запросы.</p>
+        <br>
+        <p>Открыть бота в Telegram:</p>
+        <p><a href="https://t.me/{BOT_NAME}" style="color:#00ff9d; font-size:1.1em;">@{BOT_NAME}</a></p>
+    </body>
+    </html>
+    """
+    return html
+
+
+# ===================== ЗАПУСК БОТА В ОТДЕЛЬНОМ ПОТОКЕ =====================
+def run_bot():
+    print(f"🚀 {BOT_NAME} — Polling запущен в фоне")
     while True:
         try:
             bot.infinity_polling(timeout=30, long_polling_timeout=25)
         except Exception as e:
-            print(f"[polling] {e} — перезапуск через 5 сек.")
+            print(f"[Polling Error] {e} — перезапуск через 5 сек...")
             time.sleep(5)
+
+
+# ===================== MAIN =====================
+if __name__ == "__main__":
+    if not TELEGRAM_TOKEN:
+        print("❌ TELEGRAM_TOKEN не задан!")
+    elif not MISTRAL_KEY:
+        print("❌ MISTRAL_KEY не задан!")
+    else:
+        init_db()
+        load_banned()
+        print(f"✅ {BOT_NAME} инициализирован")
+
+        # Запускаем Telegram-бота в отдельном потоке
+        bot_thread = threading.Thread(target=run_bot, daemon=True)
+        bot_thread.start()
+
+        # Запускаем FastAPI сервер
+        port = int(os.environ.get("PORT", 8000))
+        print(f"🌐 FastAPI запущен на порту {port}")
+
+        uvicorn.run(
+            "bot:app", 
+            host="0.0.0.0", 
+            port=port,
+            log_level="info"
+        )
